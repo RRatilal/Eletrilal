@@ -1,0 +1,114 @@
+/* ========================================================================
+   BottomToolbar — Bottom bar with zoom, lock, grid
+   ======================================================================== */
+
+.bottom-toolbar {
+  position: fixed;
+  bottom: var(--space-md);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 6px 12px;
+  background: var(--bg-toolbar);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 60;
+  user-select: none;
+}
+
+.bottom-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bottom-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  padding: 0;
+}
+
+.bottom-btn:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.bottom-btn:active {
+  transform: scale(0.92);
+}
+
+/* Lock button variants */
+.bottom-btn.lock-btn {
+  width: auto;
+  padding: 0 8px;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  font-family: var(--font-family);
+}
+
+.bottom-btn.lock-btn.unlocked {
+  border-color: #eab308;
+  color: #eab308;
+  background: rgba(234, 179, 8, 0.08);
+}
+
+.bottom-btn.lock-btn.unlocked:hover {
+  background: rgba(234, 179, 8, 0.15);
+}
+
+.bottom-btn.lock-btn.locked {
+  border-color: #22c55e;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.bottom-btn.lock-btn.locked:hover {
+  background: rgba(34, 197, 94, 0.15);
+}
+
+.lock-text {
+  white-space: nowrap;
+}
+
+.bottom-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  font-family: "Inter", system-ui, sans-serif;
+  font-weight: 500;
+  min-width: 40px;
+  text-align: center;
+}
+
+.zoom-label {
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+}
+
+.grid-label {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  gap: 2px;
+}
+
+.bottom-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-subtle);
+}

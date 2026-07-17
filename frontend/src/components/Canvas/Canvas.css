@@ -1,0 +1,68 @@
+/* ========================================================================
+   Canvas — Fullscreen, behind floating panels
+   ======================================================================== */
+.editor-canvas-area {
+  position: fixed;
+  top: calc(var(--toolbar-height) * 2);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-canvas);
+  overflow: hidden;
+  z-index: 1;
+}
+
+.editor-canvas-area canvas {
+  display: block;
+}
+
+/* Override Fabric.js internal wrapper to fill our container */
+.editor-canvas-area > .canvas-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Coordinates indicator (bottom-left) */
+.canvas-coords {
+  position: absolute;
+  bottom: var(--space-md);
+  left: var(--space-md);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-xs);
+  font-family: 'Courier New', monospace;
+  color: var(--text-tertiary);
+  background: var(--bg-elevated);
+  backdrop-filter: blur(8px);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Cable drawing mode */
+.editor-canvas-area.modo-cabo {
+  cursor: crosshair;
+}
+
+.cable-mode-banner {
+  position: absolute;
+  top: var(--space-md);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-sm) var(--space-xl);
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: var(--radius-md);
+  color: var(--accent-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  z-index: 20;
+  backdrop-filter: blur(12px);
+  animation: pulse-banner 2s ease-in-out infinite;
+  white-space: nowrap;
+}
+
+@keyframes pulse-banner {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}

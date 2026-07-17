@@ -1,0 +1,82 @@
+/* ─── PdfToDxf — extra styles (reuses PdfImporter base classes) ────────── */
+
+.pdf-dxf-actions-top {
+  display: flex;
+  gap: 12px;
+}
+
+.pdf-link-btn {
+  background: none;
+  border: none;
+  color: #818cf8;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pdf-link-btn:hover {
+  color: #a5b4fc;
+}
+
+.pdf-paginas-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.pdf-paginas-lista::-webkit-scrollbar { width: 4px; }
+.pdf-paginas-lista::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+.pdf-pagina-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pdf-pagina-item.selecionada {
+  border-color: rgba(99, 102, 241, 0.25);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.pdf-pagina-item.desselecionada {
+  opacity: 0.45;
+}
+
+.pdf-pagina-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pdf-pagina-numero {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #e8eaf0);
+}
+
+.pdf-pagina-dims {
+  font-size: 11px;
+  color: var(--text-tertiary, #666);
+}
+
+.pdf-dxf-nome {
+  font-size: 13px;
+  color: var(--text-secondary, #9ca3af);
+  font-family: monospace;
+  background: rgba(255,255,255,0.04);
+  padding: 6px 12px;
+  border-radius: 6px;
+}
