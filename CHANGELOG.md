@@ -50,6 +50,14 @@ Todas as actualizações significativas do projecto Electrilal.
 - No modo agrupado (≥2000 linhas), a planta é desenhada via Canvas 2D nativo com coordenadas absolutas. O `invisRect` (rectângulo de clique) é um objecto Fabric.js separado. Quando arrastado, o rect movia-se mas o desenho nativo ficava parado
 - **Correcção:** Guarda `_floorPlanInitialLeft`/`_floorPlanInitialTop` no rect. Em `drawDxfGeometry`, calcula `offset = currentPos - initialPos` e aplica a todas as coordenadas. Após calibração, actualiza a referência inicial
 
+#### Modificações da planta (crop, erase, calibrate) perdidas ao recarregar
+- Crop, Erase e Calibração da planta só existiam em refs/memória RAM. Ao recarregar a página, todas as modificações eram perdidas
+- **Correcção:**
+  - `useFloorPlanTools`: Novo callback `onModified(state)` chamado após cada confirmação, serializando `{ geometria, clipRect, scale, mode }`
+  - `App.jsx`: Novo estado `floorPlanModifications` incluído no `autosaveData` (localStorage). Ao reabrir projecto, restaura modificações e usa geometria modificada se disponível
+  - `Canvas.jsx`: Novo `useEffect` re-aplica `clipPath` (crop) e `scaleX/scaleY` (calibração) no grupo da planta após carregamento da geometria
+  - `setFloorPlanModifications(null)` ao importar novo DXF/PDF, evitando misturar modificações antigas com geometria nova
+
 #### Geometria não persiste ao reabrir projecto
 - A geometria da planta só era carregada do autosave (localStorage). Ao sair e voltar, o autosave não existia e a geometria ficava `null`
 - **Correcção:** Novo endpoint `GET /projects/{id}/geometry` no backend que re-processa o ficheiro DXF original. No frontend, `abrirProjeto` tenta: autosave → API → vazio

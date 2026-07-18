@@ -22,6 +22,7 @@ export function useFloorPlanTools({
   floorPlanScaleRef,
   floorPlanClipRectRef,
   floorPlanModeRef,
+  onModified,       // callback(state) — chamado após cada confirmação para persistir
 }) {
   const [activeTool, setActiveTool] = useState(null); // null | 'crop' | 'calibr' | 'erase'
   const [calibResult, setCalibResult] = useState(null); // { distanciaPixeis } | null
@@ -153,8 +154,24 @@ export function useFloorPlanTools({
       tempDrawRef.current = null;
     }
     canvas.renderAll();
+
+    // ─── Persistir estado da planta após crop ──────────────
+    if (onModified) {
+      const clipRect = floorPlanClipRectRef?.current
+        ? { ...floorPlanClipRectRef.current }
+        : null;
+      onModified({
+        geometria: geometriaRef?.current
+          ? JSON.parse(JSON.stringify(geometriaRef.current))
+          : null,
+        clipRect,
+        scale: floorPlanScaleRef?.current || 1,
+        mode: floorPlanModeRef?.current || "individual",
+      });
+    }
+
     desativarFerramenta();
-  }, [fabricCanvasRef, tempSelection, activeTool, floorPlanGroupRef, floorPlanModeRef, floorPlanClipRectRef, desativarFerramenta]);
+  }, [fabricCanvasRef, tempSelection, activeTool, floorPlanGroupRef, floorPlanModeRef, floorPlanClipRectRef, geometriaRef, floorPlanScaleRef, onModified, desativarFerramenta]);
 
   // ─── Confirmar Limpeza (Fase 2) ───────────────────────────────────────
   const confirmarLimpeza = useCallback(() => {
@@ -181,6 +198,32 @@ export function useFloorPlanTools({
       toRemove.forEach((child) => grupo.removeWithUpdate(child));
       grupo.setCoords();
       canvas.renderAll();
+
+      // ─── Sincronizar geometriaRef para persistência ─────
+      if (geometriaRef?.current) {
+        const data = geometriaRef.current;
+        // Remover linhas contidas (usando bounding box de cada child)
+        // Como não temos referência direta, marcamos como removido
+        // usando coordenadas aproximadas
+        toRemove.forEach((removed) => {
+          const bbox = removed.getBoundingRect();
+          data.linhas = data.linhas.filter((l) => {
+            const px1 = l.x1, py1 = l.y1;
+            const px2 = l.x2, py2 = l.y2;
+            // Verifica se a linha corresponde ao objeto removido (margem 5px)
+            const match = Math.abs(px1 - bbox.left) < 5 && Math.abs(py1 - bbox.top) < 5
+                       && Math.abs(px2 - (bbox.left + bbox.width)) < 5
+                       && Math.abs(py2 - (bbox.top + bbox.height)) < 5;
+            return !match;
+          });
+          // Remover círculos
+          data.circulos = data.circulos.filter((c) => {
+            const match = Math.abs(c.cx - (bbox.left + bbox.width / 2)) < 5
+                       && Math.abs(c.cy - (bbox.top + bbox.height / 2)) < 5;
+            return !match;
+          });
+        });
+      }
     } else if (floorPlanModeRef?.current === "agrupado" && geometriaRef) {
       // ─── Modo agrupado: remover de geometriaRef ────────────
       const data = geometriaRef.current;
@@ -211,8 +254,23 @@ export function useFloorPlanTools({
       canvas.remove(tempDrawRef.current);
       tempDrawRef.current = null;
     }
+
+    // ─── Persistir estado da planta após limpeza ───────────
+    if (onModified) {
+      onModified({
+        geometria: geometriaRef?.current
+          ? JSON.parse(JSON.stringify(geometriaRef.current))
+          : null,
+        clipRect: floorPlanClipRectRef?.current
+          ? { ...floorPlanClipRectRef.current }
+          : null,
+        scale: floorPlanScaleRef?.current || 1,
+        mode: floorPlanModeRef?.current || "individual",
+      });
+    }
+
     desativarFerramenta();
-  }, [fabricCanvasRef, tempSelection, activeTool, floorPlanGroupRef, geometriaRef, floorPlanModeRef, desativarFerramenta]);
+  }, [fabricCanvasRef, tempSelection, activeTool, floorPlanGroupRef, geometriaRef, floorPlanModeRef, floorPlanClipRectRef, floorPlanScaleRef, onModified, desativarFerramenta]);
 
   // ─── Confirmar Calibração (Fase 2) ────────────────────────────────────
   const confirmarCalibracao = useCallback((distanciaRealMetros) => {
@@ -236,6 +294,21 @@ export function useFloorPlanTools({
       grupo.set({ scaleX: scale, scaleY: scale });
       grupo.setCoords();
       canvas.renderAll();
+
+      // ─── Sincronizar geometriaRef para persistência ─────
+      if (geometriaRef?.current) {
+        const data = geometriaRef.current;
+        data.linhas.forEach((l) => {
+          l.x1 *= scale; l.y1 *= scale;
+          l.x2 *= scale; l.y2 *= scale;
+        });
+        data.polilinhas.forEach((p) => {
+          p.pontos.forEach((pt) => { pt.x *= scale; pt.y *= scale; });
+        });
+        data.circulos.forEach((c) => {
+          c.cx *= scale; c.cy *= scale; c.raio *= scale;
+        });
+      }
     } else if (modo === "agrupado" && geometriaRef) {
       const data = geometriaRef.current;
       if (data) {
@@ -278,8 +351,23 @@ export function useFloorPlanTools({
         canvas.renderAll();
       }
     }
+
+    // ─── Persistir estado da planta após calibração ────────
+    if (onModified) {
+      onModified({
+        geometria: geometriaRef?.current
+          ? JSON.parse(JSON.stringify(geometriaRef.current))
+          : null,
+        clipRect: floorPlanClipRectRef?.current
+          ? { ...floorPlanClipRectRef.current }
+          : null,
+        scale: floorPlanScaleRef?.current || 1,
+        mode: floorPlanModeRef?.current || "individual",
+      });
+    }
+
     desativarFerramenta();
-  }, [fabricCanvasRef, calibResult, floorPlanGroupRef, floorPlanScaleRef, floorPlanClipRectRef, floorPlanModeRef, geometriaRef, desativarFerramenta]);
+  }, [fabricCanvasRef, calibResult, floorPlanGroupRef, floorPlanScaleRef, floorPlanClipRectRef, floorPlanModeRef, geometriaRef, onModified, desativarFerramenta]);
 
   // ─── Handlers de rato condicionais ────────────────────────────────────
   useEffect(() => {

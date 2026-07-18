@@ -62,6 +62,12 @@ function AppContent() {
   // ─── Floor Plan Tools (Crop, Calibr, Erase) ───
   const [plantaTravada, setPlantaTravada] = useState(false);
   const [zoomNivel, setZoomNivel] = useState(1);
+  const [floorPlanModifications, setFloorPlanModifications] = useState(null);
+
+  // Handler for floor plan modifications (crop, erase, calibrate)
+  const handleFloorPlanModified = useCallback((modState) => {
+    setFloorPlanModifications(modState);
+  }, []);
 
   const {
     activeTool,
@@ -81,13 +87,16 @@ function AppContent() {
     floorPlanScaleRef: canvasRefs?.floorPlanScaleRef ?? { current: 1 },
     floorPlanClipRectRef: canvasRefs?.floorPlanClipRectRef ?? { current: null },
     floorPlanModeRef: canvasRefs?.floorPlanModeRef ?? { current: null },
+    onModified: handleFloorPlanModified,
   });
 
   // ─── Undo / Redo ───
   const { gravar, desfazer, refazer } = useUndoRedo(50);
 
   // ─── Autosave ───
-  const autosaveData = projeto ? { componentes, circuitos, conexoes, rooms, geometria } : null;
+  const autosaveData = projeto
+    ? { componentes, circuitos, conexoes, rooms, geometria, floorPlanModifications }
+    : null;
   const { estado: autosaveEstado, carregar } = useAutosave(projeto?.id, autosaveData);
 
   useEffect(() => {
@@ -140,21 +149,40 @@ function AppContent() {
       setConexoes(conns);
       setRooms(rms);
 
-      // Carregar geometria: primeiro tenta do autosave, depois da API
+      // Carregar geometria: primeiro tenta do autosave (incluindo floor plan mods), depois da API
       const autosave = carregar();
-      if (autosave?.geometria) {
-        setGeometria(autosave.geometria);
-      } else {
-        // Tentar carregar a geometria do backend (DXF original)
+      let geoParaUsar = null;
+
+      // Restaurar floor plan modifications (persistência de crop, erase, calibrate)
+      if (autosave?.floorPlanModifications) {
+        setFloorPlanModifications(autosave.floorPlanModifications);
+        // Usar a geometria modificada (já contém erases e calibração)
+        if (autosave.floorPlanModifications.geometria) {
+          geoParaUsar = autosave.floorPlanModifications.geometria;
+        }
+      }
+
+      // Fallback: geometria original do autosave
+      if (!geoParaUsar && autosave?.geometria) {
+        geoParaUsar = autosave.geometria;
+      }
+
+      // Fallback: geometria da API (DXF original)
+      if (!geoParaUsar) {
         try {
           const geoResult = await api.obterGeometria(p.id);
           if (geoResult?.geometria) {
-            setGeometria(geoResult.geometria);
+            geoParaUsar = geoResult.geometria;
           }
         } catch {
           // Sem DXF associado ou ficheiro inexistente — prossegue sem geometria
-          setGeometria(null);
         }
+      }
+
+      if (geoParaUsar) {
+        setGeometria(geoParaUsar);
+      } else {
+        setGeometria(null);
       }
 
       toast.success(`Projeto "${p.nome}" aberto`);
@@ -369,6 +397,7 @@ function AppContent() {
         projeto={projeto}
         onUploadDxf={(geo) => {
           setGeometria(geo);
+          setFloorPlanModifications(null);
           toast.success("Planta DXF carregada");
         }}
         onImportarPlantaPDF={() => setPdfImporterAberto(true)}
@@ -407,6 +436,7 @@ function AppContent() {
           projectId={projeto.id}
           onGeometriaImportada={(geo) => {
             setGeometria(geo);
+            setFloorPlanModifications(null);
             toast.success("Geometria DXF importada para o canvas");
           }}
           onClose={() => setPdfToDxfAberto(false)}
@@ -437,6 +467,7 @@ function AppContent() {
           onRoomAtualizada={handleRoomAtualizada}
           onRoomApagada={handleRoomApagada}
           onGeometriaAtualizada={setGeometria}
+          floorPlanModifications={floorPlanModifications}
           onGravarUndo={() => gravar({ componentes, geometria })}
           gridVisivel={gridVisivel}
           onToggleGrid={() => setGridVisivel((v) => !v)}

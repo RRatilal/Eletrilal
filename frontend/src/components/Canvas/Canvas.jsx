@@ -29,10 +29,12 @@ export default function Canvas({
   onGravarUndo,
   gridVisivel,
   onToggleGrid,
-  onCanvasRef
+  onCanvasRef,
+  floorPlanModifications
 }) {
   const containerRef = useRef(null);
   const canvasElRef = useRef(null);
+  const appliedFloorPlanModsRef = useRef(null);
   const {
     fabricCanvasRef, pronto,
     desenharGeometria, desenharComponente,
@@ -98,6 +100,49 @@ export default function Canvas({
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pronto, geometria, rooms]);
+
+  // ─── Re-aplicar floor plan modifications (clipRect, scale) após geometria carregar ───
+  useEffect(() => {
+    if (!pronto || !floorPlanModifications) return;
+    // Só aplicar uma vez por objecto de modificações
+    if (appliedFloorPlanModsRef.current === floorPlanModifications) return;
+
+    const canvas = fabricCanvasRef.current;
+    const grupo = floorPlanGroupRef?.current;
+    const mode = floorPlanModeRef?.current;
+
+    if (!canvas || !grupo || !mode) return;
+
+    // Re-aplicar clipPath (crop)
+    if (floorPlanModifications.clipRect) {
+      if (mode === "individual") {
+        const clipRect = new fabric.Rect({
+          left: floorPlanModifications.clipRect.left - (grupo.left || 0),
+          top: floorPlanModifications.clipRect.top - (grupo.top || 0),
+          width: floorPlanModifications.clipRect.width,
+          height: floorPlanModifications.clipRect.height,
+          originX: "left",
+          originY: "top",
+        });
+        grupo.set("clipPath", clipRect);
+        grupo.setCoords();
+      } else if (mode === "agrupado" && floorPlanClipRectRef) {
+        floorPlanClipRectRef.current = { ...floorPlanModifications.clipRect };
+      }
+    }
+
+    // Re-aplicar escala (calibração) — modo individual
+    if (floorPlanModifications.scale && floorPlanModifications.scale !== 1) {
+      if (mode === "individual") {
+        grupo.set({ scaleX: floorPlanModifications.scale, scaleY: floorPlanModifications.scale });
+        grupo.setCoords();
+      }
+      // Modo agrupado: a escala já está aplicada nos dados de geometria
+    }
+
+    canvas.requestRenderAll();
+    appliedFloorPlanModsRef.current = floorPlanModifications;
+  }, [pronto, geometria, floorPlanModifications, floorPlanGroupRef, floorPlanModeRef, floorPlanClipRectRef]);
 
   // Adiciona componentes criados dinamicamente
   useEffect(() => {

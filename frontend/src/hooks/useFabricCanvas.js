@@ -449,6 +449,9 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     floorPlanScaleRef.current = 1;
     floorPlanClipRectRef.current = null;
 
+    // Guardar a geometria original como referência
+    geometriaRef.current = null;
+
     // Calcular total de objetos que seriam criados
     const nLinhas = (geometria.linhas || []).length;
     let nSegmentosPoli = 0;
@@ -465,7 +468,8 @@ export function useFabricCanvas(canvasElRef, containerRef) {
       return _desenharGeometriaAgrupada(geometria, totalObjetos);
     } else {
       floorPlanModeRef.current = "individual";
-      geometriaRef.current = null;
+      // Manter cópia da geometria para persistir modificações (erase e calibrate)
+      geometriaRef.current = JSON.parse(JSON.stringify(geometria));
       return _desenharGeometriaIndividual(geometria, totalObjetos);
     }
   }
