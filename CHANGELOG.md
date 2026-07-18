@@ -50,6 +50,21 @@ Todas as actualizações significativas do projecto Electrilal.
 - No modo agrupado (≥2000 linhas), a planta é desenhada via Canvas 2D nativo com coordenadas absolutas. O `invisRect` (rectângulo de clique) é um objecto Fabric.js separado. Quando arrastado, o rect movia-se mas o desenho nativo ficava parado
 - **Correcção:** Guarda `_floorPlanInitialLeft`/`_floorPlanInitialTop` no rect. Em `drawDxfGeometry`, calcula `offset = currentPos - initialPos` e aplica a todas as coordenadas. Após calibração, actualiza a referência inicial
 
+#### Posição da planta não persiste (arrasto perdido ao recarregar)
+- Quando o utilizador arrasta a planta no canvas, a nova posição não era guardada em lado nenhum
+- **Correcção:**
+  - `App.jsx`: Novo `floorPlanPositionRef` com listener `object:modified` no canvas que captura `{ left, top }` do floor plan group
+  - Posição incluída no `autosaveData` e restaurada em `abrirProjeto`
+  - `Canvas.jsx`: Novo `useEffect` que aplica `grupo.set({ left, top })` após `desenharGeometria`
+
+#### Seleção do crop mostra bounding box original em vez da área cortada
+- Após aplicar `clipPath`, a bounding box do `fabric.Group` mantinha o tamanho original (clipPath é uma máscara visual, não altera dimensões)
+- **Correcção:** Em `confirmarCrop`, após aplicar clipPath, são removidos os objetos filhos 100% fora do rect de crop. Isto encolhe a bounding box automaticamente. `geometriaRef` também é sincronizado para persistência
+
+#### Painel de propriedades sobrepõe painel de circuitos
+- `PropertiesPanel` e `Sidebar` usavam ambos `position: fixed` com a mesma posição `right: var(--space-md)` e `z-index: 50`, causando sobreposição
+- **Correcção:** `Sidebar` recebe nova prop `propertiesOpen`; quando activa, a sidebar desloca-se para `right: calc(var(--panel-width) + var(--space-md) * 2)` ficando ao lado do PropertiesPanel
+
 #### Modificações da planta (crop, erase, calibrate) perdidas ao recarregar
 - Crop, Erase e Calibração da planta só existiam em refs/memória RAM. Ao recarregar a página, todas as modificações eram perdidas
 - **Correcção:**

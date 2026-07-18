@@ -143,7 +143,38 @@ export function useFloorPlanTools({
 
     if (floorPlanModeRef?.current === "individual") {
       grupo.set("clipPath", clipRect);
+
+      // Remover objetos 100% fora do rect de crop para encolher a bounding box
+      const toRemove = [];
+      grupo.forEachObject((child) => {
+        const bbox = child.getBoundingRect();
+        const outside = bbox.left + bbox.width < x ||
+                        bbox.top + bbox.height < y ||
+                        bbox.left > x + w ||
+                        bbox.top > y + h;
+        if (outside) toRemove.push(child);
+      });
+      toRemove.forEach((child) => grupo.removeWithUpdate(child));
       grupo.setCoords();
+
+      // Sincronizar geometriaRef para persistência (eliminar objetos removidos)
+      if (geometriaRef?.current && toRemove.length > 0) {
+        const data = geometriaRef.current;
+        toRemove.forEach((removed) => {
+          const bbox = removed.getBoundingRect();
+          data.linhas = data.linhas.filter((l) => {
+            const match = Math.abs(l.x1 - bbox.left) < 5 && Math.abs(l.y1 - bbox.top) < 5
+                       && Math.abs(l.x2 - (bbox.left + bbox.width)) < 5
+                       && Math.abs(l.y2 - (bbox.top + bbox.height)) < 5;
+            return !match;
+          });
+          data.circulos = data.circulos.filter((c) => {
+            const match = Math.abs(c.cx - (bbox.left + bbox.width / 2)) < 5
+                       && Math.abs(c.cy - (bbox.top + bbox.height / 2)) < 5;
+            return !match;
+          });
+        });
+      }
     } else if (floorPlanModeRef?.current === "agrupado" && floorPlanClipRectRef) {
       floorPlanClipRectRef.current = { left: x, top: y, width: w, height: h };
     }

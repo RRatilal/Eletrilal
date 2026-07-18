@@ -41,6 +41,15 @@ function AppContent() {
   // Handler unificado para onCanvasRef (recebe objeto com canvas + refs)
   const handleCanvasRef = useCallback((payload) => {
     setCanvasInstance(payload.canvas);
+    if (payload.canvas) {
+      // Ouvir movimentos da planta para persistir posição
+      payload.canvas.on("object:modified", (opt) => {
+        const obj = opt.target;
+        if (obj?.electricalData?.type === "floorplan") {
+          floorPlanPositionRef.current = { left: obj.left, top: obj.top };
+        }
+      });
+    }
     setCanvasRefs({
       toggleFloorPlanLock: payload.toggleFloorPlanLock,
       geometriaRef: payload.geometriaRef,
@@ -63,6 +72,7 @@ function AppContent() {
   const [plantaTravada, setPlantaTravada] = useState(false);
   const [zoomNivel, setZoomNivel] = useState(1);
   const [floorPlanModifications, setFloorPlanModifications] = useState(null);
+  const floorPlanPositionRef = useRef({ left: 0, top: 0 });
 
   // Handler for floor plan modifications (crop, erase, calibrate)
   const handleFloorPlanModified = useCallback((modState) => {
@@ -95,7 +105,7 @@ function AppContent() {
 
   // ─── Autosave ───
   const autosaveData = projeto
-    ? { componentes, circuitos, conexoes, rooms, geometria, floorPlanModifications }
+    ? { componentes, circuitos, conexoes, rooms, geometria, floorPlanModifications, floorPlanPosition: floorPlanPositionRef.current }
     : null;
   const { estado: autosaveEstado, carregar } = useAutosave(projeto?.id, autosaveData);
 
@@ -160,6 +170,11 @@ function AppContent() {
         if (autosave.floorPlanModifications.geometria) {
           geoParaUsar = autosave.floorPlanModifications.geometria;
         }
+      }
+
+      // Restaurar posição da planta
+      if (autosave?.floorPlanPosition) {
+        floorPlanPositionRef.current = autosave.floorPlanPosition;
       }
 
       // Fallback: geometria original do autosave
@@ -468,6 +483,7 @@ function AppContent() {
           onRoomApagada={handleRoomApagada}
           onGeometriaAtualizada={setGeometria}
           floorPlanModifications={floorPlanModifications}
+          floorPlanPosition={floorPlanPositionRef.current}
           onGravarUndo={() => gravar({ componentes, geometria })}
           gridVisivel={gridVisivel}
           onToggleGrid={() => setGridVisivel((v) => !v)}
@@ -530,6 +546,7 @@ function AppContent() {
           />
           <Sidebar
             aberto={painelDireitoAberto}
+            propertiesOpen={painelDireitoAberto}
             electricalData={electricalData}
             setElectricalData={setElectricalData}
             atualizarNoCanvas={atualizarNoCanvas}

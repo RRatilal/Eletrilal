@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import * as fabric from "fabric";
 import { useFabricCanvas, ESCALA_PX_POR_METRO } from "../../hooks/useFabricCanvas";
 import { api } from "../../api/client";
 import { useToast } from "../Toast/Toast";
@@ -30,7 +31,8 @@ export default function Canvas({
   gridVisivel,
   onToggleGrid,
   onCanvasRef,
-  floorPlanModifications
+  floorPlanModifications,
+  floorPlanPosition
 }) {
   const containerRef = useRef(null);
   const canvasElRef = useRef(null);
@@ -101,17 +103,24 @@ export default function Canvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pronto, geometria, rooms]);
 
-  // ─── Re-aplicar floor plan modifications (clipRect, scale) após geometria carregar ───
+  // ─── Aplicar posição guardada da planta + floor plan modifications após geometria carregar ───
   useEffect(() => {
-    if (!pronto || !floorPlanModifications) return;
+    const canvas = fabricCanvasRef.current;
+    const grupo = floorPlanGroupRef?.current;
+    if (!pronto || !canvas || !grupo) return;
+
+    // Aplicar posição guardada (arrasto da planta)
+    if (floorPlanPosition && (floorPlanPosition.left !== 0 || floorPlanPosition.top !== 0)) {
+      grupo.set({ left: floorPlanPosition.left, top: floorPlanPosition.top });
+      grupo.setCoords();
+    }
+
+    if (!floorPlanModifications) return;
     // Só aplicar uma vez por objecto de modificações
     if (appliedFloorPlanModsRef.current === floorPlanModifications) return;
 
-    const canvas = fabricCanvasRef.current;
-    const grupo = floorPlanGroupRef?.current;
     const mode = floorPlanModeRef?.current;
-
-    if (!canvas || !grupo || !mode) return;
+    if (!mode) return;
 
     // Re-aplicar clipPath (crop)
     if (floorPlanModifications.clipRect) {
