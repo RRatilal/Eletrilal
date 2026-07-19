@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import Toolbar from "./components/Toolbar/Toolbar";
 import ComponentToolbar from "./components/Toolbar/ComponentToolbar";
 import Canvas from "./components/Canvas/Canvas";
+import CircuitosPanel from "./components/CircuitosPanel/CircuitosPanel";
 import PropertiesPanel from "./components/PropertiesPanel/PropertiesPanel";
 import Sidebar from "./components/Sidebar/Sidebar";
 import BottomToolbar from "./components/BottomToolbar/BottomToolbar";
@@ -493,8 +494,8 @@ function AppContent() {
 
       {!modo3D && (
         <>
-          <PropertiesPanel
-            aberto={painelDireitoAberto}
+          <CircuitosPanel
+            aberto={painelDireitoAberto && electricalData == null && !activeTool}
             projectId={projeto.id}
             componentes={componentes}
             circuitos={circuitos}
@@ -509,6 +510,12 @@ function AppContent() {
                 )
               );
             }}
+            onComponenteAtualizado={handleComponenteAtualizado}
+          />
+          <PropertiesPanel
+            aberto={painelDireitoAberto && electricalData != null && electricalData.type !== "floorplan" && !activeTool}
+            componentes={componentes}
+            circuitos={circuitos}
             onComponenteAtualizado={handleComponenteAtualizado}
           />
           <BottomToolbar
@@ -545,8 +552,7 @@ function AppContent() {
             zoomValue={zoomNivel}
           />
           <Sidebar
-            aberto={painelDireitoAberto}
-            propertiesOpen={painelDireitoAberto}
+            aberto={painelDireitoAberto && (electricalData?.type === "floorplan" || activeTool)}
             electricalData={electricalData}
             setElectricalData={setElectricalData}
             atualizarNoCanvas={atualizarNoCanvas}

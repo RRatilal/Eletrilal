@@ -33,12 +33,6 @@
   opacity: 1;
 }
 
-/* ─── Quando o painel de propriedades está aberto, encolher sidebar ─── */
-.sidebar-panel.with-properties {
-  right: calc(var(--panel-width) + var(--space-md) * 2);
-  width: var(--panel-width);
-}
-
 /* ═══════════════════════════════════════════════════════════════════════
    PAINEL GERAL (sem seleção)
    ═══════════════════════════════════════════════════════════════════════ */

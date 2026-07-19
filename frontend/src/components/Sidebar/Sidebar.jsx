@@ -240,7 +240,6 @@ function PainelPropriedades({
  */
 export default function Sidebar({
   aberto,
-  propertiesOpen,
   electricalData,
   setElectricalData,
   atualizarNoCanvas,
@@ -311,7 +310,7 @@ export default function Sidebar({
   }
 
   return (
-    <div className={`sidebar-panel ${aberto ? "open" : "closed"} ${propertiesOpen ? "with-properties" : ""}`}>
+    <div className={`sidebar-panel ${aberto ? "open" : "closed"}`}>
       {renderConteudo()}
     </div>
   );

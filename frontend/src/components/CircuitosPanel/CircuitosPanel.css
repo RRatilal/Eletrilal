@@ -1,0 +1,321 @@
+/* ========================================================================
+   CircuitosPanel — Floating right panel (glassmorphism)
+   ======================================================================== */
+.circuitos-panel {
+  position: fixed;
+  top: calc(var(--toolbar-height) * 2 + var(--space-md));
+  right: var(--space-md);
+  bottom: var(--space-md);
+  width: var(--panel-width);
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  transition: transform var(--transition-normal), opacity var(--transition-normal), background-color var(--transition-normal);
+}
+
+.circuitos-panel.closed {
+  transform: translateX(calc(100% + var(--space-xl)));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.circuitos-panel.open {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+/* ---------- Section ---------- */
+.circuitos-panel .panel-section {
+  padding: var(--space-lg);
+}
+
+.circuitos-panel .panel-section + .panel-section {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.circuitos-panel .panel-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.circuitos-panel .panel-section-header h3 {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.circuitos-panel .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* ---------- New circuit form ---------- */
+.circuitos-panel .new-circuit {
+  display: flex;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.circuitos-panel .new-circuit input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  transition: border-color var(--transition-fast);
+}
+
+.circuitos-panel .new-circuit input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.circuitos-panel .new-circuit input:focus {
+  border-color: var(--accent-primary);
+  outline: none;
+}
+
+.circuitos-panel .new-circuit button {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-primary);
+  background: var(--accent-glow);
+  color: var(--accent-primary-hover);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.circuitos-panel .new-circuit button:hover {
+  background: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+/* ---------- Cards ---------- */
+.circuitos-panel .cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.circuitos-panel .circuit-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  background: var(--bg-elevated);
+  transition: border-color var(--transition-fast);
+}
+
+.circuitos-panel .circuit-card:hover {
+  border-color: var(--border-default);
+}
+
+.circuitos-panel .circuit-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.circuitos-panel .circuit-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.circuitos-panel .circuit-title {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.circuitos-panel .select-circuit-fase {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+.circuitos-panel .select-circuit-fase:hover,
+.circuitos-panel .select-circuit-fase:focus {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.circuitos-panel .btn-calculate {
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.circuitos-panel .btn-calculate:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+.circuitos-panel .btn-calculate:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- Dimensionamento result ---------- */
+.circuitos-panel .dim-result {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: rgba(99, 102, 241, 0.06);
+  border: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+.circuitos-panel .dim-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-size: var(--font-size-xs);
+}
+
+.circuitos-panel .dim-label {
+  color: var(--text-tertiary);
+}
+
+.circuitos-panel .dim-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-family: 'Courier New', monospace;
+}
+
+.circuitos-panel .aviso {
+  color: var(--color-warning);
+  font-size: var(--font-size-xs);
+  margin-top: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: var(--radius-sm);
+  line-height: 1.4;
+}
+
+/* ---------- Circuit Card Actions ---------- */
+.circuitos-panel .circuit-card-actions {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.circuitos-panel .circuit-card-actions .btn-calculate {
+  flex: 1;
+}
+
+.circuitos-panel .btn-delete-circuit {
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: var(--color-error);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.circuitos-panel .btn-delete-circuit:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* ---------- Connection cards ---------- */
+.circuitos-panel .connection-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(139, 92, 246, 0.05);
+  transition: border-color var(--transition-fast);
+  font-size: var(--font-size-sm);
+}
+
+.circuitos-panel .connection-card:hover {
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.circuitos-panel .connection-line-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.circuitos-panel .connection-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.circuitos-panel .connection-arrow {
+  color: var(--accent-secondary);
+  font-size: var(--font-size-xs);
+}
+
+/* ---------- Scrollbar ---------- */
+.circuitos-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.circuitos-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.circuitos-panel::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+.circuitos-panel::-webkit-scrollbar-thumb:hover {
+  background: var(--border-default);
+}
