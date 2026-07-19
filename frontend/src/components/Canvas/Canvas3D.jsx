@@ -133,7 +133,7 @@ function disposeObject(obj) {
 }
 
 export default function Canvas3D({
-  geometria, componentes, conexoes, rooms = [], onClose,
+  geometria, componentes, conexoes, circuitos = [], rooms = [], onClose,
 }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -680,23 +680,45 @@ export default function Canvas3D({
       sceneObjectsRef.current.push(instanced);
     });
 
-    // ─── 9. Conexões ────────────────────────────────────────────────────────
+    // ─── 9. Conexões com cor por circuito e rotas realistas ─────────────────
+    // Mapa de cores por circuito (ID -> cor)
+    const circuitColors = {};
+    const palette = [0x6366f1, 0x22c55e, 0xf59e0b, 0xef4444, 0xec4899, 0x14b8a6, 0x8b5cf6, 0x3b82f6];
+    circuitos.forEach((circ, i) => {
+      circuitColors[circ.id] = palette[i % palette.length];
+    });
+
     conexoes.forEach((conn) => {
       const orig = componentes.find((c) => c.id === conn.origem_id);
       const dest = componentes.find((c) => c.id === conn.destino_id);
       if (!orig || !dest) return;
 
+      // Determinar cor pelo circuito do componente de origem
+      const corCircuito = orig.circuit_id ? (circuitColors[orig.circuit_id] || 0x8b5cf6) : 0x8b5cf6;
+
       const y1 = ALTURAS[orig.tipo] || ALTURAS.outro;
       const y2 = ALTURAS[dest.tipo] || ALTURAS.outro;
       const p1 = new THREE.Vector3(orig.x, y1, orig.y);
       const p2 = new THREE.Vector3(dest.x, y2, dest.y);
-      const midPoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-      midPoint.y = Math.max(y1, y2, 2.7) + 0.15;
 
-      const curve = new THREE.QuadraticBezierCurve3(p1, midPoint, p2);
-      const connGeom = new THREE.BufferGeometry().setFromPoints(curve.getPoints(20));
+      // Rota realista: sobe até ao tecto (2.7m) e desce para o destino
+      const tectoY = Math.max(y1, y2, 2.7) + 0.15;
+      const midPoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+      midPoint.y = tectoY;
+
+      // Curva com 3 pontos de controlo para um percurso mais suave
+      const c1 = new THREE.Vector3(p1.x, tectoY, p1.z);
+      const c2 = new THREE.Vector3(p2.x, tectoY, p2.z);
+      const curve = new THREE.CubicBezierCurve3(p1, c1, c2, p2);
+      const connGeom = new THREE.BufferGeometry().setFromPoints(curve.getPoints(24));
       geometriesRef.current.push(connGeom);
-      const connMat = new THREE.LineBasicMaterial({ color: 0x8b5cf6 });
+
+      const connMat = new THREE.LineBasicMaterial({
+        color: corCircuito,
+        linewidth: 1,
+        transparent: true,
+        opacity: 0.85,
+      });
       const connLine = new THREE.Line(connGeom, connMat);
       scene.add(connLine);
       sceneObjectsRef.current.push(connLine);

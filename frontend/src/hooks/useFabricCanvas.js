@@ -1111,10 +1111,10 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     const x2 = destino.x * ESCALA_PX_POR_METRO;
     const y2 = -destino.y * ESCALA_PX_POR_METRO;
 
-    // Subtle glow line behind
+    // Subtle glow line behind (hit-target maior para facilitar clique)
     const glowLine = new fabric.Line([x1, y1, x2, y2], {
       stroke: "rgba(139, 92, 246, 0.15)",
-      strokeWidth: 8,
+      strokeWidth: 12,
       selectable: false,
       evented: false,
     });
@@ -1135,13 +1135,22 @@ export function useFabricCanvas(canvasElRef, containerRef) {
       hoverCursor: "pointer",
       cornerColor: "#8b5cf6",
       borderColor: "#8b5cf680",
-      padding: 6,
+      padding: 8,
     });
     line.data = {
       isConnection: true,
       connectionId: conexao.id,
       origemId: conexao.origem_id,
       destinoId: conexao.destino_id,
+      tipoCabo: conexao.tipo_cabo,
+    };
+    // electricalData para ativar o painel de propriedades
+    line.electricalData = {
+      type: "connection",
+      connectionId: conexao.id,
+      origemId: conexao.origem_id,
+      destinoId: conexao.destino_id,
+      tipoCabo: conexao.tipo_cabo || "",
     };
 
     canvas.add(glowLine);

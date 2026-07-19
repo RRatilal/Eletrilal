@@ -270,10 +270,49 @@
   border-color: rgba(239, 68, 68, 0.4);
 }
 
-/* ---------- Connection cards ---------- */
+/* ---------- Parâmetros de dimensionamento ---------- */
+.circuitos-panel .dim-params {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.circuitos-panel .dim-param {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.circuitos-panel .dim-param-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.circuitos-panel .dim-param-input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  transition: border-color var(--transition-fast);
+}
+
+.circuitos-panel .dim-param-input:focus {
+  border-color: var(--accent-primary);
+  outline: none;
+}
+
+/* ---------- Connection cards (editáveis) ---------- */
 .circuitos-panel .connection-card {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-sm);
   border: 1px solid rgba(139, 92, 246, 0.15);
   border-radius: var(--radius-md);
@@ -285,6 +324,40 @@
 
 .circuitos-panel .connection-card:hover {
   border-color: rgba(139, 92, 246, 0.3);
+}
+
+.circuitos-panel .connection-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.circuitos-panel .connection-tipo-label {
+  width: 100%;
+}
+
+.circuitos-panel .connection-tipo-select {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.circuitos-panel .connection-tipo-select:focus {
+  border-color: var(--accent-primary);
+  outline: none;
+}
+
+.circuitos-panel .connection-tipo-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
 .circuitos-panel .connection-line-icon {

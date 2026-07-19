@@ -37,6 +37,8 @@ const LABELS_TIPO = {
   quadro: "Quadro Geral",
 };
 
+const BITOLAS_CABO = ["1.5 mm²", "2.5 mm²", "4.0 mm²", "6.0 mm²", "10.0 mm²", "16.0 mm²", "25.0 mm²", "35.0 mm²"];
+
 /**
  * CircuitosPanel — Painel de gestão de circuitos e conexões.
  * Aparece no lado direito quando o botão ⚙ está activo.
@@ -51,6 +53,7 @@ export default function CircuitosPanel({
   onCircuitoAtualizado,
   onCircuitoApagado,
   onComponenteAtualizado,
+  onConexaoAtualizada,
 }) {
   const [novoCircuitoNome, setNovoCircuitoNome] = useState("");
   const [dimensionamentos, setDimensionamentos] = useState({});
@@ -65,6 +68,26 @@ export default function CircuitosPanel({
       await calcularDimensionamento(circuitId);
     } catch (err) {
       toast.error(`Erro ao atualizar fase: ${err.message}`);
+    }
+  }
+
+  async function atualizarCircuitoParam(circuitId, campo, valor) {
+    try {
+      const atualizado = await api.atualizarCircuito(circuitId, { [campo]: Number(valor) });
+      onCircuitoAtualizado(atualizado);
+      await calcularDimensionamento(circuitId);
+    } catch (err) {
+      toast.error(`Erro ao atualizar ${campo}: ${err.message}`);
+    }
+  }
+
+  async function atualizarTipoCabo(connectionId, tipoCabo) {
+    try {
+      const atualizado = await api.atualizarConexao(connectionId, { tipo_cabo: tipoCabo || null });
+      onConexaoAtualizada?.(atualizado);
+      toast.success("Tipo de cabo atualizado");
+    } catch (err) {
+      toast.error(`Erro ao atualizar cabo: ${err.message}`);
     }
   }
 
@@ -140,6 +163,44 @@ export default function CircuitosPanel({
                   <option value="bifasico">Bifásico (380V)</option>
                   <option value="trifasico">Trifásico (380V)</option>
                 </select>
+              </div>
+
+              {/* Parâmetros de dimensionamento dinâmico */}
+              <div className="dim-params">
+                <label className="dim-param">
+                  <span className="dim-param-label">Temp. (°C)</span>
+                  <input
+                    type="number"
+                    className="dim-param-input"
+                    defaultValue={c.temperatura_c ?? 30}
+                    onBlur={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (v > 0 && v !== (c.temperatura_c ?? 30)) {
+                        atualizarCircuitoParam(c.id, "temperatura_c", v);
+                      }
+                    }}
+                    min={0}
+                    max={60}
+                    step={1}
+                  />
+                </label>
+                <label className="dim-param">
+                  <span className="dim-param-label">Queda max (%)</span>
+                  <input
+                    type="number"
+                    className="dim-param-input"
+                    defaultValue={c.queda_tensao_max_pct ?? 4}
+                    onBlur={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (v > 0 && v !== (c.queda_tensao_max_pct ?? 4)) {
+                        atualizarCircuitoParam(c.id, "queda_tensao_max_pct", v);
+                      }
+                    }}
+                    min={0.5}
+                    max={10}
+                    step={0.5}
+                  />
+                </label>
               </div>
 
               <div className="circuit-card-actions">
@@ -222,14 +283,29 @@ export default function CircuitosPanel({
               const destino = componentes.find((c) => c.id === con.destino_id);
               return (
                 <div key={con.id} className="connection-card">
-                  <span className="connection-line-icon">🔗</span>
-                  <span className="connection-label">
-                    {origem?.rotulo || LABELS_TIPO[origem?.tipo] || origem?.tipo || "?"}
-                  </span>
-                  <span className="connection-arrow">→</span>
-                  <span className="connection-label">
-                    {destino?.rotulo || LABELS_TIPO[destino?.tipo] || destino?.tipo || "?"}
-                  </span>
+                  <div className="connection-card-row">
+                    <span className="connection-line-icon">🔗</span>
+                    <span className="connection-label">
+                      {origem?.rotulo || LABELS_TIPO[origem?.tipo] || origem?.tipo || "?"}
+                    </span>
+                    <span className="connection-arrow">→</span>
+                    <span className="connection-label">
+                      {destino?.rotulo || LABELS_TIPO[destino?.tipo] || destino?.tipo || "?"}
+                    </span>
+                  </div>
+                  <label className="connection-tipo-label">
+                    <span className="field-label">Tipo de Cabo</span>
+                    <select
+                      className="connection-tipo-select"
+                      defaultValue={con.tipo_cabo || ""}
+                      onChange={(e) => atualizarTipoCabo(con.id, e.target.value)}
+                    >
+                      <option value="">Automático</option>
+                      {BITOLAS_CABO.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
               );
             })}

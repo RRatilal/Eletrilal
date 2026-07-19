@@ -61,6 +61,8 @@ class CircuitCreate(BaseModel):
     fase: TipoFase = "monofasico"
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
+    temperatura_c: float = 30.0
+    queda_tensao_max_pct: float = 4.0
 
 
 class CircuitOut(BaseModel):
@@ -71,6 +73,8 @@ class CircuitOut(BaseModel):
     fase: TipoFase
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
+    temperatura_c: float = 30.0
+    queda_tensao_max_pct: float = 4.0
 
 
 class CircuitUpdate(BaseModel):
@@ -78,6 +82,8 @@ class CircuitUpdate(BaseModel):
     fase: Optional[TipoFase] = None
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
+    temperatura_c: Optional[float] = None
+    queda_tensao_max_pct: Optional[float] = None
 
 
 # ---------- Component ----------
@@ -126,6 +132,10 @@ class ConnectionOut(BaseModel):
     project_id: int
     origem_id: int
     destino_id: int
+    tipo_cabo: Optional[str] = None
+
+
+class ConnectionUpdate(BaseModel):
     tipo_cabo: Optional[str] = None
 
 

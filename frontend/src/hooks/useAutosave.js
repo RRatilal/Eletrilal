@@ -14,11 +14,13 @@ export function useAutosave(projectId, dados, delayMs = 2000) {
 
   const CHAVE = `electrilal_autosave_${projectId}`;
 
-  // Guarda quando os dados mudam (com debounce)
+  // Guarda quando os dados mudam (com debounce) — sem geometria
   useEffect(() => {
     if (!projectId || !dados) return;
 
-    const dadosStr = JSON.stringify(dados);
+    // Remover geometria do autosave para evitar estourar o limite do localStorage
+    const { geometria, ...dadosLeves } = dados;
+    const dadosStr = JSON.stringify(dadosLeves);
 
     // Não guardar se nada mudou
     if (dadosStr === ultimoRef.current) return;

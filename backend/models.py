@@ -47,6 +47,8 @@ class Circuit(Base):
     disjuntor_amperagem = Column(Float, nullable=True)
     cabo_bitola_mm2 = Column(Float, nullable=True)
     fase = Column(String, default="monofasico")  # monofasico | bifasico | trifasico
+    temperatura_c = Column(Float, default=30.0)        # Temperatura ambiente (°C)
+    queda_tensao_max_pct = Column(Float, default=4.0)  # Queda de tensão máxima (%)
 
     project = relationship("Project", back_populates="circuits")
     components = relationship("Component", back_populates="circuit")

@@ -104,9 +104,9 @@ function AppContent() {
   // ─── Undo / Redo ───
   const { gravar, desfazer, refazer } = useUndoRedo(50);
 
-  // ─── Autosave ───
+  // ─── Autosave (sem geometria — é carregada da API) ───
   const autosaveData = projeto
-    ? { componentes, circuitos, conexoes, rooms, geometria, floorPlanModifications, floorPlanPosition: floorPlanPositionRef.current }
+    ? { componentes, circuitos, conexoes, rooms, floorPlanModifications, floorPlanPosition: floorPlanPositionRef.current }
     : null;
   const { estado: autosaveEstado, carregar } = useAutosave(projeto?.id, autosaveData);
 
@@ -160,39 +160,26 @@ function AppContent() {
       setConexoes(conns);
       setRooms(rms);
 
-      // Carregar geometria: primeiro tenta do autosave (incluindo floor plan mods), depois da API
+      // Carregar geometria sempre da API (não do localStorage)
       const autosave = carregar();
       let geoParaUsar = null;
 
-      // Restaurar floor plan modifications (persistência de crop, erase, calibrate)
+      // Restaurar floor plan modifications e posição do autosave
       if (autosave?.floorPlanModifications) {
         setFloorPlanModifications(autosave.floorPlanModifications);
-        // Usar a geometria modificada (já contém erases e calibração)
-        if (autosave.floorPlanModifications.geometria) {
-          geoParaUsar = autosave.floorPlanModifications.geometria;
-        }
       }
-
-      // Restaurar posição da planta
       if (autosave?.floorPlanPosition) {
         floorPlanPositionRef.current = autosave.floorPlanPosition;
       }
 
-      // Fallback: geometria original do autosave
-      if (!geoParaUsar && autosave?.geometria) {
-        geoParaUsar = autosave.geometria;
-      }
-
-      // Fallback: geometria da API (DXF original)
-      if (!geoParaUsar) {
-        try {
-          const geoResult = await api.obterGeometria(p.id);
-          if (geoResult?.geometria) {
-            geoParaUsar = geoResult.geometria;
-          }
-        } catch {
-          // Sem DXF associado ou ficheiro inexistente — prossegue sem geometria
+      // Geometria vem sempre da API (DXF original re-processado)
+      try {
+        const geoResult = await api.obterGeometria(p.id);
+        if (geoResult?.geometria) {
+          geoParaUsar = geoResult.geometria;
         }
+      } catch {
+        // Sem DXF associado — prossegue sem geometria
       }
 
       if (geoParaUsar) {
@@ -464,6 +451,7 @@ function AppContent() {
           geometria={geometria}
           componentes={componentes}
           conexoes={conexoes}
+          circuitos={circuitos}
           rooms={rooms}
           onClose={() => setModo3D(false)}
         />
@@ -511,6 +499,11 @@ function AppContent() {
               );
             }}
             onComponenteAtualizado={handleComponenteAtualizado}
+            onConexaoAtualizada={(atualizada) =>
+              setConexoes((prev) =>
+                prev.map((c) => (c.id === atualizada.id ? atualizada : c))
+              )
+            }
           />
           <PropertiesPanel
             aberto={painelDireitoAberto && electricalData != null && electricalData.type !== "floorplan" && !activeTool}

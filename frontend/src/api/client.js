@@ -85,6 +85,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(conexao),
     }),
+  atualizarConexao: (connectionId, dados) =>
+    request(`/connections/${connectionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(dados),
+    }),
   apagarConexao: (connectionId) =>
     request(`/connections/${connectionId}`, { method: "DELETE" }),
 

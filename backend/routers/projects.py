@@ -65,13 +65,17 @@ def _calcular_dimensionamento(circuito, db):
         circuito.project_id, circuito.id, db
     )
 
+    # Parâmetros dinâmicos do circuito (ou defaults)
+    temperatura = getattr(circuito, 'temperatura_c', None) or 30.0
+    queda_tensao_max = getattr(circuito, 'queda_tensao_max_pct', None) or 4.0
+
     resultado = calculator.dimensionar_circuito(
         potencia_total_w=potencia_total,
         fase=circuito.fase,
         comprimento_m=comprimento_m,
         circuitos_agrupados=agrupados,
-        temperatura_c=30.0,
-        queda_tensao_max_pct=4.0,
+        temperatura_c=temperatura,
+        queda_tensao_max_pct=queda_tensao_max,
         fator_potencia=0.92,
     )
 
@@ -484,6 +488,19 @@ def criar_conexao(project_id: int, payload: schemas.ConnectionCreate, db: Sessio
 @router.get("/projects/{project_id}/connections", response_model=List[schemas.ConnectionOut])
 def listar_conexoes(project_id: int, db: Session = Depends(get_db)):
     return db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
+
+
+@router.patch("/connections/{connection_id}", response_model=schemas.ConnectionOut)
+def atualizar_conexao(connection_id: int, payload: schemas.ConnectionUpdate, db: Session = Depends(get_db)):
+    """Atualiza propriedades de uma conexão (ex: tipo_cabo)."""
+    conexao = db.query(models.Connection).filter(models.Connection.id == connection_id).first()
+    if not conexao:
+        raise HTTPException(status_code=404, detail="Conexão não encontrada.")
+    for campo, valor in payload.model_dump(exclude_unset=True).items():
+        setattr(conexao, campo, valor)
+    db.commit()
+    db.refresh(conexao)
+    return conexao
 
 
 @router.delete("/connections/{connection_id}")
