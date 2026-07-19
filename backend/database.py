@@ -30,7 +30,22 @@ def _configurar_pragmas_sqlite(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("PRAGMA synchronous=NORMAL;")
+
+    # Migração automática: adicionar colunas novas se não existirem
+    # (SQLite não suporta ALTER TABLE ADD COLUMN IF NOT EXISTS)
+    _migar_coluna(cursor, "circuits", "temperatura_c", "FLOAT DEFAULT 30.0")
+    _migar_coluna(cursor, "circuits", "queda_tensao_max_pct", "FLOAT DEFAULT 4.0")
+
     cursor.close()
+
+
+def _migar_coluna(cursor, tabela, coluna, tipo_def):
+    """Adiciona coluna a uma tabela SQLite se ela ainda não existir."""
+    try:
+        cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo_def};")
+    except Exception:
+        pass  # Coluna já existe — ignorar
+
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
