@@ -31,6 +31,8 @@ function AppContent() {
   const [painelEsquerdoAberto, setPainelEsquerdoAberto] = useState(true);
   const [painelDireitoAberto, setPainelDireitoAberto] = useState(true);
   const [modoCabo, setModoCabo] = useState(false);
+  const modoCaboRef = useRef(false);
+  useEffect(() => { modoCaboRef.current = modoCabo; }, [modoCabo]);
   const [pdfImporterAberto, setPdfImporterAberto] = useState(false);
   const [pdfToDxfAberto, setPdfToDxfAberto] = useState(false);
   const [modo3D, setModo3D] = useState(false);
@@ -67,7 +69,11 @@ function AppContent() {
     setElectricalData,
     atualizarNoCanvas,
     limparSelecao,
+    selectedComponentId,
   } = useCanvasIntegration(canvasInstance);
+
+  // Componente seleccionado (para o painel individual)
+  const selectedComponent = componentes.find((c) => c.id === selectedComponentId) || null;
 
   // ─── Floor Plan Tools (Crop, Calibr, Erase) ───
   const [plantaTravada, setPlantaTravada] = useState(false);
@@ -120,6 +126,7 @@ function AppContent() {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
 
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        if (modoCaboRef.current) return; // Let Canvas handle cable-specific undo
         e.preventDefault();
         const snapshot = desfazer({ componentes, geometria });
         if (snapshot) {
@@ -483,7 +490,7 @@ function AppContent() {
       {!modo3D && (
         <>
           <CircuitosPanel
-            aberto={painelDireitoAberto && electricalData == null && !activeTool}
+            aberto={painelDireitoAberto && electricalData === null && !activeTool}
             projectId={projeto.id}
             componentes={componentes}
             circuitos={circuitos}
@@ -506,10 +513,20 @@ function AppContent() {
             }
           />
           <PropertiesPanel
-            aberto={painelDireitoAberto && electricalData != null && electricalData.type !== "floorplan" && !activeTool}
-            componentes={componentes}
+            aberto={painelDireitoAberto && electricalData !== null && electricalData.type !== "floorplan" && !activeTool}
+            componente={selectedComponent}
+            conexao={conexoes.find((c) => c.id === (electricalData?.type === "conduto" ? electricalData.connectionId : null)) || null}
             circuitos={circuitos}
             onComponenteAtualizado={handleComponenteAtualizado}
+            onConexaoAtualizada={(atualizada) =>
+              setConexoes((prev) =>
+                prev.map((c) => (c.id === atualizada.id ? atualizada : c))
+              )
+            }
+            electricalData={electricalData}
+            setElectricalData={setElectricalData}
+            atualizarNoCanvas={atualizarNoCanvas}
+            canvasInstance={canvasInstance}
           />
           <BottomToolbar
             onZoomIn={() => {

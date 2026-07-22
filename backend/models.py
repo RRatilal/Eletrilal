@@ -1,6 +1,7 @@
 """
 Modelos SQLAlchemy - definem as tabelas da base de dados.
 """
+# pyrefly: ignore [missing-import]
 from sqlalchemy import (
     Column, Integer, String, Float, ForeignKey, DateTime, Text
 )
@@ -30,7 +31,7 @@ class Room(Base):
     __tablename__ = "rooms"
 
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     nome = Column(String, nullable=True)
     poligono_geojson = Column(Text, nullable=False)  # guardado como string JSON
 
@@ -42,7 +43,7 @@ class Circuit(Base):
     __tablename__ = "circuits"
 
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     nome = Column(String, nullable=False)
     disjuntor_amperagem = Column(Float, nullable=True)
     cabo_bitola_mm2 = Column(Float, nullable=True)
@@ -59,13 +60,15 @@ class Component(Base):
     __tablename__ = "components"
 
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    circuit_id = Column(Integer, ForeignKey("circuits.id"), nullable=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    circuit_id = Column(Integer, ForeignKey("circuits.id"), nullable=True, index=True)
 
     tipo = Column(String, nullable=False)  # tomada | interruptor | luminaria | quadro
     x = Column(Float, nullable=False)
     y = Column(Float, nullable=False)
     rotacao = Column(Float, default=0.0)
+    scale_x = Column(Float, default=1.0)
+    scale_y = Column(Float, default=1.0)
     potencia_w = Column(Float, default=0.0)
     rotulo = Column(String, nullable=True)  # ex: "Tomada Cozinha 1"
 
@@ -74,13 +77,17 @@ class Component(Base):
 
 
 class Connection(Base):
-    """Ligação (cabo) entre dois componentes."""
+    """Ligação (conduto) entre dois componentes."""
     __tablename__ = "connections"
 
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    origem_id = Column(Integer, ForeignKey("components.id"), nullable=False)
-    destino_id = Column(Integer, ForeignKey("components.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    origem_id = Column(Integer, ForeignKey("components.id"), nullable=False, index=True)
+    destino_id = Column(Integer, ForeignKey("components.id"), nullable=False, index=True)
     tipo_cabo = Column(String, nullable=True)  # ex: "2.5mm2"
+    localizacao = Column(String, default="teto_parede")  # teto_parede | subterraneo
+    circuitos_bloqueados = Column(String, default="[]")   # JSON array string ex: '["1", "3"]'
+    c1_x = Column(Float, nullable=True)  # Ponto de controlo X (curva Bezier)
+    c1_y = Column(Float, nullable=True)  # Ponto de controlo Y (curva Bezier)
 
     project = relationship("Project", back_populates="connections")

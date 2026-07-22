@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { api } from "../../api/client";
 import { useToast } from "../Toast/Toast";
 import "./CircuitosPanel.css";
@@ -24,6 +24,7 @@ const LABELS_TIPO = {
   tv: "Tomada TV Coaxial",
   campainha: "Campainha / Interfone",
   camera: "Câmara CCTV",
+  caixa_passagem: "Caixa de Passagem",
   passagem_sobe: "Caixa de Passagem (Sobe)",
   passagem_desce: "Caixa de Passagem (Desce)",
   interruptor: "Interruptor",
@@ -58,7 +59,16 @@ export default function CircuitosPanel({
   const [novoCircuitoNome, setNovoCircuitoNome] = useState("");
   const [dimensionamentos, setDimensionamentos] = useState({});
   const [calculating, setCalculating] = useState({});
+  const [calculatingAll, setCalculatingAll] = useState(false);
+  const [globalResults, setGlobalResults] = useState(null);
   const toast = useToast();
+
+  // Reset states when switching projects
+  useEffect(() => {
+    setGlobalResults(null);
+    setCalculatingAll(false);
+    setDimensionamentos({});
+  }, [projectId]);
 
   async function atualizarCircuitoFase(circuitId, fase) {
     try {
@@ -115,6 +125,20 @@ export default function CircuitosPanel({
       toast.error(`Erro no cálculo: ${err.message}`);
     } finally {
       setCalculating((prev) => ({ ...prev, [circuitoId]: false }));
+    }
+  }
+
+  async function dimensionarTodos() {
+    setCalculatingAll(true);
+    setGlobalResults(null);
+    try {
+      const resultado = await api.dimensionarTodosCircuitos(projectId);
+      setGlobalResults(resultado);
+      toast.success("Dimensionamento global concluído");
+    } catch (err) {
+      toast.error(`Erro no dimensionamento global: ${err.message}`);
+    } finally {
+      setCalculatingAll(false);
     }
   }
 
@@ -266,6 +290,63 @@ export default function CircuitosPanel({
               )}
             </div>
           ))}
+        </div>
+
+        {/* Botão de dimensionamento global */}
+        <div className="dim-global-section">
+          <button
+            className="btn-dim-global"
+            onClick={dimensionarTodos}
+            disabled={calculatingAll}
+          >
+            {calculatingAll ? "A calcular todos..." : "⚡ Dimensionar Todos os Circuitos"}
+          </button>
+
+          {globalResults && (
+            <div className="dim-global-results">
+              <div className="dim-global-summary">
+                <span className="dim-label">Total de circuitos</span>
+                <span className="dim-value">{globalResults.total_circuits}</span>
+              </div>
+              {globalResults.results?.map((r) => (
+                <div key={r.circuito_id} className="dim-global-card">
+                  <div className="dim-global-header">
+                    <strong>{r.circuito_nome}</strong>
+                    <span className="circuit-type-badge">{r.circuitType}</span>
+                  </div>
+                  {r.error ? (
+                    <div className="aviso">⚠ {r.error}</div>
+                  ) : (
+                    <>
+                      <div className="dim-row">
+                        <span className="dim-label">Potência</span>
+                        <span className="dim-value">{r.potencia_total_w} W</span>
+                      </div>
+                      <div className="dim-row">
+                        <span className="dim-label">Corrente Ib</span>
+                        <span className="dim-value">{r.nominalCurrent_A} A</span>
+                      </div>
+                      <div className="dim-row">
+                        <span className="dim-label">Disjuntor In</span>
+                        <span className="dim-value dim-value-highlight">{r.breaker_A} A</span>
+                      </div>
+                      <div className="dim-row">
+                        <span className="dim-label">Cabo</span>
+                        <span className="dim-value dim-value-highlight">{r.cableSection_mm2} mm²</span>
+                      </div>
+                      <div className="dim-row">
+                        <span className="dim-label">Queda Tensão</span>
+                        <span className="dim-value">{r.voltageDrop_percentage}%</span>
+                      </div>
+                      {r.warnings?.map((w, i) => (
+                        <div key={i} className="aviso">⚠ {w}</div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

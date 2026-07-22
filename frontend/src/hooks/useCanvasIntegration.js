@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { updateLampText, updateCaixaPassagemText } from "../components/Canvas/SymbolFactory";
 
 /**
  * Estrutura base do electricalData injetado em cada fabric.Group
@@ -42,6 +43,16 @@ export function criarElectricalData(tipo, dadosExtras = {}) {
     };
   }
 
+  if (tipo && tipo.startsWith("caixa_passagem")) {
+    return {
+      ...base,
+      nome:      { value: dadosExtras.nome ?? "CX1", visible: true },
+      descricao: dadosExtras.descricao ?? "PVC 4x4",
+      altura:    { value: dadosExtras.altura ?? "280,00", visible: true },
+      tamanho:   dadosExtras.tamanho ?? "100x100",
+    };
+  }
+
   if (tipo && tipo.startsWith("tomada")) {
     return {
       ...base,
@@ -79,11 +90,13 @@ export function criarElectricalData(tipo, dadosExtras = {}) {
 export function useCanvasIntegration(canvasInstance) {
   const [selectedObject, setSelectedObject] = useState(null);
   const [electricalData, setElectricalData] = useState(null);
+  const [selectedComponentId, setSelectedComponentId] = useState(null);
 
   // Limpar seleção
   const limparSelecao = useCallback(() => {
     setSelectedObject(null);
     setElectricalData(null);
+    setSelectedComponentId(null);
     if (canvasInstance) {
       canvasInstance.discardActiveObject();
       canvasInstance.renderAll();
@@ -99,6 +112,12 @@ export function useCanvasIntegration(canvasInstance) {
 
     // 1. Atualizar o electricalData no objeto
     grupo.electricalData = { ...data };
+
+    // Guarda: só fabric.Group tem forEachObject
+    if (typeof grupo.forEachObject !== 'function') {
+      canvasInstance.renderAll();
+      return;
+    }
 
     // 2. Atualizar os fabric.IText children visíveis no grupo
     //    Cada texto tem um campo `data.labelKey` que identifica a que propriedade pertence
@@ -116,6 +135,13 @@ export function useCanvasIntegration(canvasInstance) {
           child.set("text", String(prop));
         }
       }
+
+      // 3. Para símbolos com textos aninhados dentro de sub-grupo
+      if (child.type === "group") {
+        // Tentar ambos os updaters — cada um ignora grupos que não lhe pertencem
+        updateLampText(child, data);
+        updateCaixaPassagemText(child, data);
+      }
     });
 
     grupo.setCoords();
@@ -130,6 +156,7 @@ export function useCanvasIntegration(canvasInstance) {
       const obj = e.selected?.[0];
       if (obj?.electricalData) {
         setSelectedObject(obj);
+        setSelectedComponentId(obj.data?.componentId || null);
         setElectricalData({ ...obj.electricalData });
       } else if (obj?.data?.componentId) {
         // Objeto sem electricalData — criar um default
@@ -137,9 +164,11 @@ export function useCanvasIntegration(canvasInstance) {
         const defaultData = criarElectricalData(tipo);
         obj.electricalData = defaultData;
         setSelectedObject(obj);
+        setSelectedComponentId(obj.data.componentId);
         setElectricalData({ ...defaultData });
       } else {
         setSelectedObject(null);
+        setSelectedComponentId(null);
         setElectricalData(null);
       }
     }
@@ -150,6 +179,7 @@ export function useCanvasIntegration(canvasInstance) {
 
     function onSelectionCleared() {
       setSelectedObject(null);
+      setSelectedComponentId(null);
       setElectricalData(null);
     }
 
@@ -169,5 +199,6 @@ export function useCanvasIntegration(canvasInstance) {
     setElectricalData,
     atualizarNoCanvas,
     limparSelecao,
+    selectedComponentId,
   };
 }

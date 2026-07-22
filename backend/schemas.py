@@ -1,9 +1,10 @@
 """
 Schemas Pydantic - validação de entrada/saída da API.
 """
+import json
 from datetime import datetime
 from typing import Optional, List, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TipoComponente = Literal[
     # Originais
@@ -15,7 +16,7 @@ TipoComponente = Literal[
     # Comunicações
     "telefonia", "dados", "tv", "campainha", "camera",
     # Caixas de Passagem
-    "passagem_sobe", "passagem_desce",
+    "caixa_passagem", "passagem_sobe", "passagem_desce",
     # Interruptores
     "interruptor_simples", "interruptor_duplo", "interruptor_triplo", "interruptor_intermediario", "interruptor_paralelo", "interruptor_dimmer", "interruptor_pulsador"
 ]
@@ -92,6 +93,8 @@ class ComponentCreate(BaseModel):
     x: float
     y: float
     rotacao: float = 0.0
+    scale_x: Optional[float] = 1.0
+    scale_y: Optional[float] = 1.0
     potencia_w: float = Field(default=0.0, ge=0)
     rotulo: Optional[str] = None
     circuit_id: Optional[int] = None
@@ -101,6 +104,8 @@ class ComponentUpdate(BaseModel):
     x: Optional[float] = None
     y: Optional[float] = None
     rotacao: Optional[float] = None
+    scale_x: Optional[float] = None
+    scale_y: Optional[float] = None
     potencia_w: Optional[float] = Field(default=None, ge=0)
     rotulo: Optional[str] = None
     circuit_id: Optional[int] = None
@@ -115,6 +120,8 @@ class ComponentOut(BaseModel):
     x: float
     y: float
     rotacao: float
+    scale_x: float = 1.0
+    scale_y: float = 1.0
     potencia_w: float
     rotulo: Optional[str] = None
 
@@ -124,6 +131,10 @@ class ConnectionCreate(BaseModel):
     origem_id: int
     destino_id: int
     tipo_cabo: Optional[str] = None
+    localizacao: Optional[str] = "teto_parede"
+    circuitos_bloqueados: Optional[List[str]] = None
+    c1_x: Optional[float] = None
+    c1_y: Optional[float] = None
 
 
 class ConnectionOut(BaseModel):
@@ -133,10 +144,28 @@ class ConnectionOut(BaseModel):
     origem_id: int
     destino_id: int
     tipo_cabo: Optional[str] = None
+    localizacao: Optional[str] = "teto_parede"
+    circuitos_bloqueados: List[str] = []
+    c1_x: Optional[float] = None
+    c1_y: Optional[float] = None
+
+    @field_validator("circuitos_bloqueados", mode="before")
+    @classmethod
+    def parse_circuitos_bloqueados(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return []
+        return v or []
 
 
 class ConnectionUpdate(BaseModel):
     tipo_cabo: Optional[str] = None
+    localizacao: Optional[str] = None
+    circuitos_bloqueados: Optional[List[str]] = None
+    c1_x: Optional[float] = None
+    c1_y: Optional[float] = None
 
 
 # ---------- Batch Delete ----------

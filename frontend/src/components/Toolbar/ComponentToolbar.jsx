@@ -7,6 +7,7 @@ import {
   IconTomadaTrifasica, IconTomadaSensor, IconTomadaDupla, IconTomadaTripla,
   IconTelefonia, IconDados, IconTv, IconCampainha, IconCamera,
   IconPassagemSobe, IconPassagemDesce,
+  IconCaixaPassagem,
   IconInterruptorSimples, IconInterruptorDuplo, IconInterruptorTriplo,
   IconInterruptorIntermediario, IconInterruptorParalelo,
   IconInterruptorDimmer, IconInterruptorPulsador,
@@ -59,6 +60,7 @@ const CATEGORIAS = [
     label: "Caixas de Passagem",
     icon: IconPassagemSobe,
     items: [
+      { tipo: "caixa_passagem", label: "Caixa de Passagem", icon: IconCaixaPassagem },
       { tipo: "passagem_sobe", label: "Passagem Sobe", icon: IconPassagemSobe },
       { tipo: "passagem_desce", label: "Passagem Desce", icon: IconPassagemDesce },
     ]

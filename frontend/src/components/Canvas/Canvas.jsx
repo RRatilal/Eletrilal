@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as fabric from "fabric";
 import { useFabricCanvas, ESCALA_PX_POR_METRO } from "../../hooks/useFabricCanvas";
 import { api } from "../../api/client";
@@ -46,6 +46,7 @@ export default function Canvas({
     floorPlanClipRectRef, floorPlanModeRef,
   } = useFabricCanvas(canvasElRef, containerRef);
   const desenhadosRef = useRef(new Set());
+  const ultimosCabosRef = useRef([]); // IDs dos cabos criados no modo actual
   const toast = useToast();
   const [caboOrigem, setCaboOrigem] = useState(null);
 
@@ -64,6 +65,185 @@ export default function Canvas({
     }
   }, [pronto, fabricCanvasRef, geometriaRef, floorPlanGroupRef,
       floorPlanScaleRef, floorPlanClipRectRef, floorPlanModeRef, onCanvasRef]);
+
+  // ─── Alça Interativa de Edição de Curva (Condutos) ───
+  const activeCurveHandleRef = useRef(null);
+
+  const removerAlcaCurva = useCallback(() => {
+    const canvas = fabricCanvasRef.current;
+    if (activeCurveHandleRef.current && canvas) {
+      canvas.remove(activeCurveHandleRef.current);
+      activeCurveHandleRef.current = null;
+      canvas.requestRenderAll();
+    }
+  }, [fabricCanvasRef]);
+
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!pronto || !canvas) return;
+
+    function atualizarAlcaCurva(target) {
+      removerAlcaCurva();
+      if (!target || !target.data?.isConnection) return;
+
+      const c1_x = target.data.c1_x;
+      const c1_y = target.data.c1_y;
+
+      if (c1_x == null || c1_y == null) return;
+
+      const px = c1_x * ESCALA_PX_POR_METRO;
+      const py = -c1_y * ESCALA_PX_POR_METRO;
+
+      const handle = new fabric.Circle({
+        left: px,
+        top: py,
+        radius: 7,
+        fill: "#22c55e", // verde
+        stroke: "#ffffff",
+        strokeWidth: 2,
+        originX: "center",
+        originY: "center",
+        hasBorders: false,
+        hasControls: false,
+        hoverCursor: "move",
+        selectable: true,
+        evented: true,
+      });
+
+      handle.data = {
+        isCurveHandle: true,
+        connectionId: target.data.connectionId,
+      };
+
+      handle.on("moving", () => {
+        const hx = handle.left;
+        const hy = handle.top;
+
+        const connObj = target;
+        const glowObj = canvas.getObjects().find(
+          (o) => o.data?.isConnectionGlow && o.data?.connectionId === target.data.connectionId
+        );
+
+        if (connObj?.path) {
+          const origX = connObj.path[0][1];
+          const origY = connObj.path[0][2];
+          const destIndex = connObj.path.length - 1;
+          const destX = connObj.path[destIndex][3] ?? connObj.path[destIndex][1];
+          const destY = connObj.path[destIndex][4] ?? connObj.path[destIndex][2];
+
+          const newPathStr = `M ${origX} ${origY} Q ${hx} ${hy} ${destX} ${destY}`;
+          const newPath = new fabric.Path(newPathStr).path;
+
+          connObj.set({ path: newPath });
+          connObj.setCoords();
+          if (glowObj) {
+            glowObj.set({ path: newPath });
+            glowObj.setCoords();
+          }
+        }
+        canvas.requestRenderAll();
+      });
+
+      handle.on("modified", async () => {
+        const worldX = handle.left / ESCALA_PX_POR_METRO;
+        const worldY = -handle.top / ESCALA_PX_POR_METRO;
+        try {
+          const atualizado = await api.atualizarConexao(target.data.connectionId, {
+            c1_x: worldX,
+            c1_y: worldY,
+          });
+          target.data.c1_x = worldX;
+          target.data.c1_y = worldY;
+          if (target.electricalData) {
+            target.electricalData.c1_x = worldX;
+            target.electricalData.c1_y = worldY;
+          }
+          toast.success("Curva do conduto guardada");
+        } catch (err) {
+          toast.error(`Erro ao guardar curva: ${err.message}`);
+        }
+      });
+
+      canvas.add(handle);
+      canvas.bringObjectToFront(handle);
+      activeCurveHandleRef.current = handle;
+      canvas.requestRenderAll();
+    }
+
+    function onSelectionCreated(e) {
+      const obj = e.selected?.[0];
+      atualizarAlcaCurva(obj);
+    }
+    function onSelectionUpdated(e) {
+      const obj = e.selected?.[0];
+      atualizarAlcaCurva(obj);
+    }
+    function onSelectionCleared() {
+      removerAlcaCurva();
+    }
+
+    canvas.on("selection:created", onSelectionCreated);
+    canvas.on("selection:updated", onSelectionUpdated);
+    canvas.on("selection:cleared", onSelectionCleared);
+
+    return () => {
+      canvas.off("selection:created", onSelectionCreated);
+      canvas.off("selection:updated", onSelectionUpdated);
+      canvas.off("selection:cleared", onSelectionCleared);
+    };
+  }, [pronto, fabricCanvasRef, removerAlcaCurva]);
+
+  // ─── Duplicação de Componente com Clique Direito (Mouse Button 2) ───
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!pronto || !canvas) return;
+
+    async function handleRightClickDuplicate(options) {
+      const e = options.e;
+      if (!e) return;
+
+      // Clique direito do rato (button === 2 ou options.button === 3)
+      const isRightClick = e.button === 2 || options.button === 3;
+      if (isRightClick) {
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        if (typeof e.stopPropagation === "function") e.stopPropagation();
+
+        const target = options.target || (canvas.findTarget ? canvas.findTarget(e) : null);
+        const componentId = target?.data?.componentId || target?.group?.data?.componentId;
+        if (componentId) {
+          const orig = componentes.find((c) => c.id === componentId);
+          if (!orig) return;
+
+          const pointer = canvas.getScenePoint?.(e) || canvas.getPointer(e);
+          const novoX = pointer.x / ESCALA_PX_POR_METRO;
+          const novoY = -pointer.y / ESCALA_PX_POR_METRO;
+
+          try {
+            const novocomp = await api.criarComponente(projectId, {
+              tipo: orig.tipo,
+              x: novoX,
+              y: novoY,
+              rotacao: orig.rotacao || 0,
+              scale_x: orig.scale_x || 1.0,
+              scale_y: orig.scale_y || 1.0,
+              potencia_w: orig.potencia_w || 0,
+              rotulo: orig.rotulo || "",
+              circuit_id: orig.circuit_id || null,
+            });
+            onComponenteCriado?.(novocomp);
+            toast.success("Componente duplicado!");
+          } catch (err) {
+            toast.error(`Erro ao duplicar componente: ${err.message}`);
+          }
+        }
+      }
+    }
+
+    canvas.on("mouse:down", handleRightClickDuplicate);
+    return () => {
+      canvas.off("mouse:down", handleRightClickDuplicate);
+    };
+  }, [pronto, fabricCanvasRef, componentes, projectId, onComponenteCriado, toast]);
 
   // Sincronizar visibilidade da grelha
   useEffect(() => {
@@ -186,13 +366,10 @@ export default function Canvas({
     canvas.selection = false;
 
     function handleClick(opt) {
+      // getPointer já devolve coordenadas no espaço do canvas (world-space).
+      // NÃO aplicar zoom/vpt novamente — isso duplicaria a transformação!
       const pointer = canvas.getPointer(opt.e);
-      const vpt = canvas.viewportTransform;
-      const zoom = canvas.getZoom();
-      const screenX = pointer.x * zoom + vpt[4];
-      const screenY = pointer.y * zoom + vpt[5];
-
-      const compId = encontrarComponenteEm({ x: screenX, y: screenY });
+      const compId = encontrarComponenteEm({ x: pointer.x, y: pointer.y });
       if (!compId) return;
 
       if (!caboOrigem) {
@@ -222,29 +399,34 @@ export default function Canvas({
   useEffect(() => {
     if (!modoCabo) {
       setCaboOrigem(null);
+      ultimosCabosRef.current = []; // Limpar histórico ao sair do modo cabo
     }
   }, [modoCabo]);
 
   // Evitar stale closures mantendo referências atualizadas em refs
   const callbacksRef = useRef({});
   callbacksRef.current = {
+    modoCabo,
     caboOrigem,
     onCaboOrigemSelecionada,
     executarRemocoes,
+    desfazerUltimoCabo,
+    ultimosCabosIds: ultimosCabosRef.current,
   };
 
   useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+
     function handleKeyDown(e) {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
 
-      const canvas = fabricCanvasRef.current;
-      if (!canvas) return;
+      const c = fabricCanvasRef.current;
+      if (!c) return;
 
       if (e.key === "Delete" || e.key === "Backspace") {
-        const activeObject = canvas.getActiveObject();
+        const activeObject = c.getActiveObject();
         if (!activeObject) return;
 
-        // Suporta tanto seleção unitária como seleção múltipla (ActiveSelection)
         const isMulti = activeObject.type === "activeSelection";
         const objectsToDelete = isMulti ? [...activeObject.getObjects()] : [activeObject];
 
@@ -277,9 +459,7 @@ export default function Canvas({
         }
 
         e.preventDefault();
-        
-        // Limpa a seleção ativa do canvas antes de remover para evitar glitches visuais no Fabric.js
-        canvas.discardActiveObject();
+        c.discardActiveObject();
 
         callbacksRef.current.executarRemocoes?.(
           componentesParaApagar,
@@ -287,6 +467,15 @@ export default function Canvas({
           roomsParaApagar,
           dxfParaApagar
         );
+      }
+
+      // Ctrl+Z: undo last cable (only in cable mode)
+      // App-level handler already skips Ctrl+Z when modoCabo is active
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        if (callbacksRef.current.ultimosCabosIds.length > 0) {
+          e.preventDefault();
+          callbacksRef.current.desfazerUltimoCabo?.();
+        }
       }
 
       if (e.key === "Escape" && callbacksRef.current.caboOrigem) {
@@ -380,9 +569,38 @@ export default function Canvas({
         destino_id: destinoId,
       });
       onConexaoCriada?.(novaConexao);
-      toast.success("Cabo criado");
+      // Registar para permitir Ctrl+Z desfazer
+      ultimosCabosRef.current.push(novaConexao.id);
+      toast.success("Cabo criado  (Ctrl+Z para desfazer)");
     } catch (err) {
       toast.error(err.message);
+    }
+  }
+
+  async function desfazerUltimoCabo() {
+    const ids = ultimosCabosRef.current;
+    if (ids.length === 0) {
+      toast.info("Nenhum cabo para desfazer");
+      return;
+    }
+    const connectionId = ids.pop();
+
+    const canvas = fabricCanvasRef.current;
+    if (canvas) {
+      // Remover linhas do canvas (tanto a linha principal como o glow)
+      const linhas = canvas.getObjects().filter(
+        (o) => o.data?.connectionId === connectionId
+      );
+      linhas.forEach((l) => canvas.remove(l));
+      canvas.requestRenderAll();
+    }
+
+    try {
+      await api.apagarConexao(connectionId);
+      onConexaoApagada?.(connectionId);
+      toast.success("Último cabo desfeito");
+    } catch (err) {
+      toast.error(`Erro ao desfazer cabo: ${err.message}`);
     }
   }
 
@@ -433,11 +651,14 @@ export default function Canvas({
     const { componentId } = grupo.data;
     const x = grupo.left / ESCALA_PX_POR_METRO;
     const y = -grupo.top / ESCALA_PX_POR_METRO;
+    const scale_x = grupo.scaleX || 1.0;
+    const scale_y = grupo.scaleY || 1.0;
+    const rotacao = grupo.angle || 0.0;
     try {
-      const atualizado = await api.atualizarComponente(componentId, { x, y });
+      const atualizado = await api.atualizarComponente(componentId, { x, y, scale_x, scale_y, rotacao });
       onComponenteAtualizado?.(atualizado);
     } catch (err) {
-      toast.error(`Erro ao atualizar posição: ${err.message}`);
+      toast.error(`Erro ao atualizar componente: ${err.message}`);
     }
   }
 
@@ -509,6 +730,7 @@ export default function Canvas({
       className={`editor-canvas-area ${modoCabo ? "modo-cabo" : ""}`}
       onDrop={handleDrop}
       onDragOver={(e) => e.preventDefault()}
+      onContextMenu={(e) => e.preventDefault()}
     >
       <canvas ref={canvasElRef} id="fabric-canvas" />
       <div className="canvas-coords" id="canvas-coords" />

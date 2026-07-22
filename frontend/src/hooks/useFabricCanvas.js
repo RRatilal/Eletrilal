@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as fabric from "fabric";
 import { criarElectricalData } from "./useCanvasIntegration";
+import { createLampSymbol, createCaixaPassagemSymbol } from "../components/Canvas/SymbolFactory";
 
 // Escala: 1 metro do mundo real = 40 pixels no canvas (ajustável)
 export const ESCALA_PX_POR_METRO = 40;
@@ -44,6 +45,8 @@ export function useFabricCanvas(canvasElRef, containerRef) {
       selectionColor: "rgba(99, 102, 241, 0.15)",
       selectionBorderColor: "rgba(99, 102, 241, 0.6)",
       selectionLineWidth: 1,
+      fireRightClick: true,
+      stopContextMenu: true,
     });
     fabricCanvasRef.current = canvas;
 
@@ -494,7 +497,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     (geometria.linhas || []).forEach((l) => {
       const line = new fabric.Line(
         [l.x1 * ESCALA_PX_POR_METRO, -l.y1 * ESCALA_PX_POR_METRO,
-         l.x2 * ESCALA_PX_POR_METRO, -l.y2 * ESCALA_PX_POR_METRO],
+        l.x2 * ESCALA_PX_POR_METRO, -l.y2 * ESCALA_PX_POR_METRO],
         attrs
       );
       dxfObjects.push(line);
@@ -507,7 +510,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
         const p2 = poli.pontos[i + 1];
         const line = new fabric.Line(
           [p1.x * ESCALA_PX_POR_METRO, -p1.y * ESCALA_PX_POR_METRO,
-           p2.x * ESCALA_PX_POR_METRO, -p2.y * ESCALA_PX_POR_METRO],
+          p2.x * ESCALA_PX_POR_METRO, -p2.y * ESCALA_PX_POR_METRO],
           attrs
         );
         dxfObjects.push(line);
@@ -517,7 +520,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
         const pFirst = poli.pontos[0];
         const line = new fabric.Line(
           [pLast.x * ESCALA_PX_POR_METRO, -pLast.y * ESCALA_PX_POR_METRO,
-           pFirst.x * ESCALA_PX_POR_METRO, -pFirst.y * ESCALA_PX_POR_METRO],
+          pFirst.x * ESCALA_PX_POR_METRO, -pFirst.y * ESCALA_PX_POR_METRO],
           attrs
         );
         dxfObjects.push(line);
@@ -678,9 +681,9 @@ export function useFabricCanvas(canvasElRef, containerRef) {
       }
 
       else if (tipo === "lampada_arandela") {
-        // 2. Arandela: Linha vertical (parede) + D virado para a esquerda
-        shapes.push(new fabric.Line([-13, -10, -13, 10], { stroke: cor, strokeWidth: 1.5, originX: "center", originY: "center" }));
-        shapes.push(new fabric.Path("M -13 -9 A 9 9 0 0 0 -13 9 Z", {
+        // 2. Arandela: Linha vertical (parede) + D virado para a esquerda (centrado em 0,0)
+        shapes.push(new fabric.Line([4.5, -9, 4.5, 9], { stroke: cor, strokeWidth: 1.5, originX: "center", originY: "center" }));
+        shapes.push(new fabric.Path("M 4.5 -9 A 9 9 0 0 0 4.5 9 Z", {
           fill: "transparent", stroke: cor, strokeWidth: 1.5, originX: "center", originY: "center"
         }));
       }
@@ -804,7 +807,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     // ────────────────────────────────────────────────
     // 3. COMUNICAÇÕES
     // ────────────────────────────────────────────────
-    else if (["telefonia","dados","tv","campainha","camera"].includes(tipo)) {
+    else if (["telefonia", "dados", "tv", "campainha", "camera"].includes(tipo)) {
       // Triângulo base para telecom (como triângulo para cima com haste)
       function triComm() {
         return new fabric.Path("M 0 -11 L 7 1 L -7 1 Z", {
@@ -977,85 +980,183 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     ) {
       categoria = "telecom";
     }
-    else if (componente.tipo.startsWith("passagem")) categoria = "passagem";
+    else if (componente.tipo.startsWith("caixa_passagem")) categoria = "passagem";
     else if (componente.tipo.startsWith("interruptor")) categoria = "interruptor";
     else if (componente.tipo === "quadro") categoria = "quadro";
 
     const cor = cores[categoria] || cores.outro;
 
-    // Glow suave
-    const glow = new fabric.Circle({
-      radius: 16,
-      fill: cor + "15",
-      stroke: "transparent",
-      originX: "center",
-      originY: "center",
-    });
-
-    // ─── Obter shapes do símbolo e adicionar ao grupo ───────────────────
-    const symbolShapes = obterFormasDoSimbolo(componente.tipo, cor);
+    // Glow suave — sem glow para interruptores
+    const usarGlow = categoria !== "interruptor";
+    const glow = usarGlow
+      ? new fabric.Circle({
+        radius: (categoria === "lampada" && (componente.tipo === "lampada" || componente.tipo === "lampada_simples"))
+          ? 22
+          : 12,
+        fill: cor + "15",
+        stroke: "transparent",
+        originX: "center",
+        originY: "center",
+      })
+      : null;
 
     // ─── Injetar electricalData com campos padrão ───────────────────────
-    const electricalData = criarElectricalData(componente.tipo, {
-      potencia_va: componente.potencia_w != null ? String(componente.potencia_w) : "100",
-      comando: componente.rotulo || "",
-      circuito: componente.circuit_id != null ? String(componente.circuit_id) : "",
-    });
+    // comandoInicial: para caixa de passagem, parsear JSON e usar o nome
+    const comandoInicial = (() => {
+      if (componente.tipo.startsWith("caixa_passagem") && componente.rotulo) {
+        try {
+          const parsed = JSON.parse(componente.rotulo);
+          if (parsed && typeof parsed === "object" && parsed.nome) {
+            return parsed.nome;
+          }
+        } catch { }
+        return componente.rotulo;
+      }
+      if (categoria === "lampada" || categoria === "interruptor") {
+        return componente.rotulo?.length === 1 ? componente.rotulo : "a";
+      }
+      return componente.rotulo || "";
+    })();
+    const electricalData = criarElectricalData(componente.tipo, (() => {
+      // Para caixa de passagem, parsear rotulo como JSON com os dados extra
+      if (componente.tipo.startsWith("caixa_passagem") && componente.rotulo) {
+        try {
+          const parsed = JSON.parse(componente.rotulo);
+          if (parsed && typeof parsed === "object" && "nome" in parsed) {
+            return {
+              nome: parsed.nome,
+              descricao: parsed.descricao,
+              altura: parsed.altura,
+              tamanho: parsed.tamanho,
+            };
+          }
+        } catch { }
+        // Fallback: rotulo é o nome antigo (string simples)
+        return { nome: componente.rotulo };
+      }
+      // Para os outros tipos
+      return {
+        potencia_va: componente.potencia_w != null ? String(componente.potencia_w) : "100",
+        comando: comandoInicial,
+        circuito: componente.circuit_id != null ? String(componente.circuit_id) : "",
+      };
+    })());
 
-    // ─── Adicionar labels de texto (fabric.IText) visíveis no canvas ────
-    const labelOffsetX = 18; // pixels à direita do símbolo
-    const isDark = document.documentElement.getAttribute("data-theme") !== "light";
-    const textColor = isDark ? "#cbd5e1" : "#334155";
+    // ─── Usar novo símbolo de lâmpada para lampada_simples/lampada ───
+    let grupoCompleto;
 
-    function addLabel(key, offsetY) {
-      const prop = electricalData[key];
-      if (!prop) return;
-      const textValue = prop.value != null ? String(prop.value) : "";
-      const visible = prop.visible === true;
-      const label = new fabric.IText(textValue, {
-        fontSize: 8,
-        fontFamily: "Inter, system-ui, sans-serif",
-        fill: textColor,
-        fontWeight: "500",
-        originX: "left",
+    const scaleX = componente.scale_x || 1.0;
+    const scaleY = componente.scale_y || 1.0;
+    const angle = componente.rotacao || 0.0;
+
+    if (categoria === "lampada" && (componente.tipo === "lampada" || componente.tipo === "lampada_simples")) {
+      // Novo símbolo com divisões internas e texto dinâmico ancorado
+      const lampGroup = createLampSymbol(electricalData);
+      const children = glow ? [glow, lampGroup] : [lampGroup];
+      grupoCompleto = new fabric.Group(children, {
+        left: componente.x * ESCALA_PX_POR_METRO,
+        top: -componente.y * ESCALA_PX_POR_METRO,
+        scaleX,
+        scaleY,
+        angle,
+        originX: "center",
         originY: "center",
-        left: labelOffsetX,
-        top: offsetY,
-        selectable: false,
-        evented: false,
-        visible: visible,
+        cornerColor: "#6366f1",
+        cornerStrokeColor: "#6366f1",
+        borderColor: "#6366f180",
+        cornerSize: 7,
+        cornerStyle: "circle",
+        transparentCorners: false,
+        padding: 4,
       });
-      label.data = { labelKey: key };
-      symbolShapes.push(label);
+    } else if (categoria === "passagem" && componente.tipo === "caixa_passagem") {
+      // Caixa de Passagem: quadrado com X dentro + textos
+      const passagemGroup = createCaixaPassagemSymbol(electricalData);
+      const children = glow ? [glow, passagemGroup] : [passagemGroup];
+      grupoCompleto = new fabric.Group(children, {
+        left: componente.x * ESCALA_PX_POR_METRO,
+        top: -componente.y * ESCALA_PX_POR_METRO,
+        scaleX,
+        scaleY,
+        angle,
+        originX: "center",
+        originY: "center",
+        cornerColor: "#6366f1",
+        cornerStrokeColor: "#6366f1",
+        borderColor: "#6366f180",
+        cornerSize: 7,
+        cornerStyle: "rect",
+        transparentCorners: false,
+        padding: 4,
+      });
+    } else {
+      // ─── Obter shapes do símbolo tradicional ──────────────────────────
+      const symbolShapes = obterFormasDoSimbolo(componente.tipo, cor);
+
+      // ─── Adicionar labels de texto (fabric.IText) visíveis no canvas ──
+      // Interruptores só mostram o símbolo (sem labels externos)
+      if (categoria !== "interruptor") {
+        const labelOffsetX = 18;
+        const isDark = document.documentElement.getAttribute("data-theme") !== "light";
+        const textColor = isDark ? "#cbd5e1" : "#334155";
+
+        function addLabel(key, offsetY) {
+          const prop = electricalData[key];
+          if (!prop) return;
+          const textValue = prop.value != null ? String(prop.value) : "";
+          const visible = prop.visible === true;
+          if (!visible || !textValue.trim()) return;
+
+          const label = new fabric.IText(textValue, {
+            fontSize: 8,
+            fontFamily: "Inter, system-ui, sans-serif",
+            fill: textColor,
+            fontWeight: "500",
+            originX: "left",
+            originY: "center",
+            left: labelOffsetX,
+            top: offsetY,
+            selectable: false,
+            evented: false,
+            visible: true,
+          });
+          label.data = { labelKey: key };
+          symbolShapes.push(label);
+        }
+
+        if (electricalData.circuito?.value) {
+          addLabel("circuito", -6);
+        }
+        if (electricalData.comando?.value) {
+          addLabel("comando", 6);
+        }
+        if (electricalData.potencia_va?.value && electricalData.potencia_va?.visible) {
+          addLabel("potencia_va", 14);
+        }
+        if (electricalData.nome?.value) {
+          addLabel("nome", -14);
+        }
+      }
+
+      const children = glow ? [glow, ...symbolShapes] : [...symbolShapes];
+      grupoCompleto = new fabric.Group(children, {
+        left: componente.x * ESCALA_PX_POR_METRO,
+        top: -componente.y * ESCALA_PX_POR_METRO,
+        scaleX,
+        scaleY,
+        angle,
+        originX: "center",
+        originY: "center",
+        cornerColor: "#6366f1",
+        cornerStrokeColor: "#6366f1",
+        borderColor: "#6366f180",
+        cornerSize: 7,
+        cornerStyle: "circle",
+        transparentCorners: false,
+        padding: 4,
+      });
     }
 
-    // Posições verticais dos labels
-    if (electricalData.circuito?.value) {
-      addLabel("circuito", -6);
-    }
-    if (electricalData.comando?.value) {
-      addLabel("comando", 6);
-    }
-    if (electricalData.potencia_va?.value && electricalData.potencia_va?.visible) {
-      addLabel("potencia_va", 14);
-    }
-    if (electricalData.nome?.value) {
-      addLabel("nome", -14);
-    }
-
-    const grupoCompleto = new fabric.Group([glow, ...symbolShapes], {
-      left: componente.x * ESCALA_PX_POR_METRO,
-      top: -componente.y * ESCALA_PX_POR_METRO,
-      originX: "center",
-      originY: "center",
-      cornerColor: "#6366f1",
-      cornerStrokeColor: "#6366f1",
-      borderColor: "#6366f180",
-      cornerSize: 7,
-      cornerStyle: "circle",
-      transparentCorners: false,
-      padding: 4,
-    });
     grupoCompleto.data = { componentId: componente.id, tipo: componente.tipo };
     grupoCompleto.electricalData = electricalData;
 
@@ -1068,7 +1169,6 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     });
 
     canvas.add(grupoCompleto);
-    // NÃO chamar renderAll() aqui — o chamador faz uma vez no fim
     return grupoCompleto;
   }
 
@@ -1076,17 +1176,54 @@ export function useFabricCanvas(canvasElRef, containerRef) {
    * Atualiza as coordenadas das linhas ligadas a um componente específico.
    * Chamado em tempo real durante o evento 'moving' do Fabric.js.
    */
+  /**
+   * Atualiza as coordenadas dos paths ligados a um componente específico em tempo real durante o arraste.
+   */
   function atualizarLinhasDoComponente(componentId, left, top) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
     canvas.getObjects().forEach((obj) => {
       if (obj.data?.isConnection || obj.data?.isConnectionGlow) {
-        if (obj.data.origemId === componentId) {
-          obj.set({ x1: left, y1: top });
-          obj.setCoords();
-        } else if (obj.data.destinoId === componentId) {
-          obj.set({ x2: left, y2: top });
+        if (obj.data.origemId === componentId || obj.data.destinoId === componentId) {
+          const pathArr = obj.path;
+          if (!pathArr || pathArr.length < 2) return;
+
+          let origX = pathArr[0][1];
+          let origY = pathArr[0][2];
+
+          const lastIdx = pathArr.length - 1;
+          const targetCmd = pathArr[lastIdx];
+          let destX = targetCmd[0] === 'Q' ? targetCmd[3] : targetCmd[1];
+          let destY = targetCmd[0] === 'Q' ? targetCmd[4] : targetCmd[2];
+
+          if (obj.data.origemId === componentId) {
+            origX = left;
+            origY = top;
+          }
+          if (obj.data.destinoId === componentId) {
+            destX = left;
+            destY = top;
+          }
+
+          let newPathStr;
+          if (targetCmd[0] === 'Q') {
+            const hx = targetCmd[1];
+            const hy = targetCmd[2];
+            newPathStr = `M ${origX} ${origY} Q ${hx} ${hy} ${destX} ${destY}`;
+          } else {
+            newPathStr = `M ${origX} ${origY} L ${destX} ${destY}`;
+          }
+
+          const tempPath = new fabric.Path(newPathStr);
+          obj.set({
+            path: tempPath.path,
+            left: tempPath.left,
+            top: tempPath.top,
+            width: tempPath.width,
+            height: tempPath.height,
+            pathOffset: tempPath.pathOffset,
+          });
           obj.setCoords();
         }
       }
@@ -1095,8 +1232,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
   }
 
   /**
-   * Desenha uma conexão (cabo) entre dois componentes como uma linha curva.
-   * Procura os grupos dos componentes no canvas pelo componentId.
+   * Desenha uma conexão (conduto) entre dois componentes como um fabric.Path (reta ou curva).
    */
   function desenharConexao(conexao, componentes) {
     const canvas = fabricCanvasRef.current;
@@ -1111,69 +1247,96 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     const x2 = destino.x * ESCALA_PX_POR_METRO;
     const y2 = -destino.y * ESCALA_PX_POR_METRO;
 
-    // Subtle glow line behind (hit-target maior para facilitar clique)
-    const glowLine = new fabric.Line([x1, y1, x2, y2], {
-      stroke: "rgba(139, 92, 246, 0.15)",
-      strokeWidth: 12,
+    const c1_x = conexao.c1_x != null ? conexao.c1_x * ESCALA_PX_POR_METRO : null;
+    const c1_y = conexao.c1_y != null ? -conexao.c1_y * ESCALA_PX_POR_METRO : null;
+
+    const isCurved = c1_x != null && c1_y != null;
+    const pathData = isCurved
+      ? `M ${x1} ${y1} Q ${c1_x} ${c1_y} ${x2} ${y2}`
+      : `M ${x1} ${y1} L ${x2} ${y2}`;
+
+    const isSubterraneo = conexao.localizacao === "subterraneo";
+    const strokeDashArray = isSubterraneo ? [8, 4] : null;
+
+    // Hit-target transparente por trás para facilitar seleção de condutos estreitos
+    const glowPath = new fabric.Path(pathData, {
+      stroke: "rgba(0, 0, 0, 0.001)",
+      strokeWidth: 14,
+      fill: "transparent",
       selectable: false,
       evented: false,
     });
-    glowLine.data = {
+    glowPath.data = {
       isConnectionGlow: true,
       connectionId: conexao.id,
       origemId: conexao.origem_id,
       destinoId: conexao.destino_id,
     };
 
-    // Main cable line
-    const line = new fabric.Line([x1, y1, x2, y2], {
-      stroke: "#8b5cf6",
-      strokeWidth: 2,
-      strokeDashArray: [8, 4],
+    // Objeto Path principal do conduto
+    const pathObj = new fabric.Path(pathData, {
+      stroke: "#000000", // por padrão é preto
+      strokeWidth: 3,
+      strokeDashArray,
+      fill: "transparent",
       selectable: true,
       evented: true,
       hoverCursor: "pointer",
-      cornerColor: "#8b5cf6",
-      borderColor: "#8b5cf680",
-      padding: 8,
+      hasBorders: false,
+      hasControls: false,
+      padding: 6,
     });
-    line.data = {
+
+    pathObj.data = {
       isConnection: true,
       connectionId: conexao.id,
       origemId: conexao.origem_id,
       destinoId: conexao.destino_id,
       tipoCabo: conexao.tipo_cabo,
+      isCurved,
+      c1_x: conexao.c1_x,
+      c1_y: conexao.c1_y,
     };
-    // electricalData para ativar o painel de propriedades
-    line.electricalData = {
-      type: "connection",
+
+    pathObj.electricalData = {
+      type: "conduto",
       connectionId: conexao.id,
       origemId: conexao.origem_id,
       destinoId: conexao.destino_id,
       tipoCabo: conexao.tipo_cabo || "",
+      localizacao: conexao.localizacao || "teto_parede",
+      circuitos_bloqueados: conexao.circuitos_bloqueados || [],
+      c1_x: conexao.c1_x,
+      c1_y: conexao.c1_y,
     };
 
-    canvas.add(glowLine);
-    canvas.add(line);
+    // Mudança de cor: vermelho quando selecionado, preto quando desselecionado
+    pathObj.on("selected", () => {
+      pathObj.set("stroke", "#ef4444"); // vermelho quando selecionado
+      canvas.requestRenderAll();
+    });
+    pathObj.on("deselected", () => {
+      pathObj.set("stroke", "#000000"); // preto por padrão
+      canvas.requestRenderAll();
+    });
 
-    // Send connection lines behind components but above grid/geometry
-    canvas.sendObjectToBack(glowLine);
-    canvas.sendObjectToBack(line);
+    canvas.add(glowPath);
+    canvas.add(pathObj);
 
-    // NÃO chamar renderAll() aqui — o chamador faz uma vez no fim
-    return line;
+    canvas.sendObjectToBack(glowPath);
+    canvas.sendObjectToBack(pathObj);
+
+    return pathObj;
   }
 
   /**
-   * Atualiza as posições de todas as linhas de conexão no canvas.
-   * Otimizado: atualiza posições de linhas existentes em vez de destruir e recriar.
+   * Atualiza as posições de todas as linhas/paths de conexão no canvas.
    */
   function atualizarConexoes(conexoes, componentes) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    // Criar mapa de conexões existentes no canvas por connectionId
-    const existingLines = new Map(); // connectionId -> { line, glow }
+    const existingLines = new Map();
     const existingIds = new Set();
     canvas.getObjects().forEach((obj) => {
       if (obj.data?.isConnection) {
@@ -1196,10 +1359,8 @@ export function useFabricCanvas(canvasElRef, containerRef) {
       }
     }
 
-    // Criar mapa de componentes para lookup rápido
     const compMap = new Map(componentes.map((c) => [c.id, c]));
 
-    // Atualizar existentes ou criar novas
     conexoes.forEach((con) => {
       const origem = compMap.get(con.origem_id);
       const destino = compMap.get(con.destino_id);
@@ -1210,17 +1371,60 @@ export function useFabricCanvas(canvasElRef, containerRef) {
       const x2 = destino.x * ESCALA_PX_POR_METRO;
       const y2 = -destino.y * ESCALA_PX_POR_METRO;
 
+      const c1_x = con.c1_x != null ? con.c1_x * ESCALA_PX_POR_METRO : null;
+      const c1_y = con.c1_y != null ? -con.c1_y * ESCALA_PX_POR_METRO : null;
+      const isCurved = c1_x != null && c1_y != null;
+
+      const pathDataString = isCurved
+        ? `M ${x1} ${y1} Q ${c1_x} ${c1_y} ${x2} ${y2}`
+        : `M ${x1} ${y1} L ${x2} ${y2}`;
+
+      const isSubterraneo = con.localizacao === "subterraneo";
+      const strokeDashArray = isSubterraneo ? [8, 4] : null;
+
       const existing = existingLines.get(con.id);
       if (existing?.line) {
-        // Atualizar posição das linhas existentes
-        existing.line.set({ x1, y1, x2, y2 });
+        const tempPath = new fabric.Path(pathDataString);
+        existing.line.set({
+          path: tempPath.path,
+          left: tempPath.left,
+          top: tempPath.top,
+          width: tempPath.width,
+          height: tempPath.height,
+          pathOffset: tempPath.pathOffset,
+          strokeDashArray,
+        });
+        existing.line.data = {
+          ...existing.line.data,
+          isCurved,
+          c1_x: con.c1_x,
+          c1_y: con.c1_y,
+        };
+        existing.line.electricalData = {
+          type: "conduto",
+          connectionId: con.id,
+          origemId: con.origem_id,
+          destinoId: con.destino_id,
+          tipoCabo: con.tipo_cabo || "",
+          localizacao: con.localizacao || "teto_parede",
+          circuitos_bloqueados: con.circuitos_bloqueados || [],
+          c1_x: con.c1_x,
+          c1_y: con.c1_y,
+        };
         existing.line.setCoords();
+
         if (existing.glow) {
-          existing.glow.set({ x1, y1, x2, y2 });
+          existing.glow.set({
+            path: tempPath.path,
+            left: tempPath.left,
+            top: tempPath.top,
+            width: tempPath.width,
+            height: tempPath.height,
+            pathOffset: tempPath.pathOffset,
+          });
           existing.glow.setCoords();
         }
       } else {
-        // Criar nova conexão
         desenharConexao(con, componentes);
       }
     });
@@ -1264,8 +1468,8 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     if (!canvas) return null;
 
     let left = 150;
-    let top  = 150;
-    let width  = 200;
+    let top = 150;
+    let width = 200;
     let height = 150;
     const nomeRaw = room.nome || "Divisão";
     // Mostrar apenas o nome (sem dimensões no label principal)
@@ -1274,15 +1478,15 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     try {
       const geojson = JSON.parse(room.poligono_geojson);
       if (geojson.coordinates && geojson.coordinates[0]) {
-        const coords  = geojson.coordinates[0];
+        const coords = geojson.coordinates[0];
         const world_x = coords[0][0];
         const world_y = coords[0][1];
         const world_w = Math.abs(coords[2][0] - coords[0][0]);
         const world_h = Math.abs(coords[0][1] - coords[2][1]);
 
-        left   = world_x * ESCALA_PX_POR_METRO;
-        top    = -world_y * ESCALA_PX_POR_METRO;
-        width  = world_w * ESCALA_PX_POR_METRO;
+        left = world_x * ESCALA_PX_POR_METRO;
+        top = -world_y * ESCALA_PX_POR_METRO;
+        width = world_w * ESCALA_PX_POR_METRO;
         height = world_h * ESCALA_PX_POR_METRO;
       }
     } catch (e) {
@@ -1292,7 +1496,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     // ─── Cor de fill baseada no tipo de divisão ───────────────────────────
     const nome_lower = nomeLabel.toLowerCase();
     let fillColor;
-    if      (nome_lower.includes("quarto") || nome_lower.includes("suite"))
+    if (nome_lower.includes("quarto") || nome_lower.includes("suite"))
       fillColor = "rgba(99, 102, 241, 0.07)";  // índigo (dormitório)
     else if (nome_lower.includes("sala"))
       fillColor = "rgba(34, 197, 94, 0.06)";   // verde (sala)
@@ -1309,12 +1513,12 @@ export function useFabricCanvas(canvasElRef, containerRef) {
 
     // ─── Retângulo da divisão (parede sólida) ────────────────────────────
     const rect = new fabric.Rect({
-      left:        0,
-      top:         0,
-      width:       width,
-      height:      height,
-      fill:        fillColor,
-      stroke:      "#94a3b8",
+      left: 0,
+      top: 0,
+      width: width,
+      height: height,
+      fill: fillColor,
+      stroke: "#94a3b8",
       strokeWidth: 2,
       rx: 0,
       ry: 0,
@@ -1330,46 +1534,46 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     // Nome principal
     const labelFontSize = Math.max(10, Math.min(16, width / 8, height / 4));
     const labelNome = new fabric.Text(nomeLabel, {
-      fontSize:   labelFontSize,
+      fontSize: labelFontSize,
       fontWeight: "600",
-      fill:       "#e2e8f0",
+      fill: "#e2e8f0",
       fontFamily: "Inter, system-ui, sans-serif",
-      textAlign:  "center",
-      originX:    "center",
-      originY:    "center",
-      left:       width  / 2,
-      top:        height / 2 - labelFontSize * 0.7,
+      textAlign: "center",
+      originX: "center",
+      originY: "center",
+      left: width / 2,
+      top: height / 2 - labelFontSize * 0.7,
       selectable: false,
     });
 
     // Dimensões (pequenas, abaixo do nome)
     const labelDim = new fabric.Text(getDimText(width, height), {
-      fontSize:   Math.max(8, Math.min(11, width / 12)),
-      fill:       "#64748b",
+      fontSize: Math.max(8, Math.min(11, width / 12)),
+      fill: "#64748b",
       fontFamily: "Inter, system-ui, sans-serif",
-      textAlign:  "center",
-      originX:    "center",
-      originY:    "center",
-      left:       width  / 2,
-      top:        height / 2 + labelFontSize * 0.5,
+      textAlign: "center",
+      originX: "center",
+      originY: "center",
+      left: width / 2,
+      top: height / 2 + labelFontSize * 0.5,
       selectable: false,
     });
 
     const grupo = new fabric.Group([rect, labelNome, labelDim], {
-      left:              left,
-      top:               top,
-      cornerColor:       "#94a3b8",
-      borderColor:       "#94a3b8",
-      cornerSize:        8,
-      cornerStyle:       "rect",
+      left: left,
+      top: top,
+      cornerColor: "#94a3b8",
+      borderColor: "#94a3b8",
+      cornerSize: 8,
+      cornerStyle: "rect",
       transparentCorners: false,
-      padding:           0,
+      padding: 0,
     });
     grupo.data = { roomId: room.id, isRoom: true };
 
     // Atualiza labels durante redimensionamento
     grupo.on("scaling", () => {
-      const cw = rect.width  * grupo.scaleX;
+      const cw = rect.width * grupo.scaleX;
       const ch = rect.height * grupo.scaleY;
       labelDim.set({ text: getDimText(cw, ch) });
       canvas.renderAll();
@@ -1377,10 +1581,10 @@ export function useFabricCanvas(canvasElRef, containerRef) {
 
     if (onModified) {
       grupo.on("modified", () => {
-        const finalWidth  = rect.width  * grupo.scaleX;
+        const finalWidth = rect.width * grupo.scaleX;
         const finalHeight = rect.height * grupo.scaleY;
-        const finalLeft   = grupo.left;
-        const finalTop    = grupo.top;
+        const finalLeft = grupo.left;
+        const finalTop = grupo.top;
 
         rect.set({ width: finalWidth, height: finalHeight });
         labelNome.set({ left: finalWidth / 2, top: finalHeight / 2 - labelFontSize * 0.7 });

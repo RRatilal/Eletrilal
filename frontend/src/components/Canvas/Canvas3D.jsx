@@ -13,6 +13,7 @@ const ALTURAS = {
   tomada_trifasica: 1.1, tomada_sensor: 1.1, tomada_dupla: 0.3, tomada_tripla: 0.3,
   telefonia: 0.3, dados: 0.3, tv: 1.1, campainha: 2.2, camera: 2.5,
   passagem_sobe: 1.5, passagem_desce: 1.5,
+  caixa_passagem: 2.8, // default 280cm, sobrescrito pelo rotulo JSON
   interruptor: 1.1, interruptor_simples: 1.1, interruptor_duplo: 1.1,
   interruptor_triplo: 1.1, interruptor_intermediario: 1.1, interruptor_paralelo: 1.1,
   interruptor_dimmer: 1.1, interruptor_pulsador: 1.1,
@@ -33,6 +34,28 @@ const CORES_COMP = {
   interruptor_dimmer: 0x22c55e, interruptor_pulsador: 0x22c55e,
   quadro: 0xef4444, outro: 0x8b5cf6,
 };
+
+// ─── Helper: Textura de gradiente radial de alta qualidade (Glow / Halo) ──────
+let glowTextureCache = null;
+function getGlowTexture() {
+  if (glowTextureCache) return glowTextureCache;
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  const grad = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+  // Gradiente exponencial para um brilho mais natural
+  grad.addColorStop(0.0, "rgba(255, 253, 230, 1.0)");
+  grad.addColorStop(0.1, "rgba(255, 253, 230, 0.8)");
+  grad.addColorStop(0.3, "rgba(255, 240, 150, 0.4)");
+  grad.addColorStop(0.6, "rgba(255, 240, 150, 0.05)");
+  grad.addColorStop(1.0, "rgba(255, 240, 150, 0.0)");
+
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 256, 256);
+  glowTextureCache = new THREE.CanvasTexture(canvas);
+  return glowTextureCache;
+}
 
 // ─── Helper: obter geometria e metadados de um componente ─────────────────────
 function getComponentGeometry(c) {
@@ -66,7 +89,7 @@ function getComponentGeometry(c) {
     } else if (c.tipo === "lampada_spot") {
       geom = new THREE.CylinderGeometry(0.05, 0.05, 0.01, 16);
     } else {
-      geom = new THREE.CylinderGeometry(0.1, 0.1, 0.04, 16);
+      geom = new THREE.SphereGeometry(0.08, 16, 16);
     }
   } else if (c.tipo.startsWith("tomada")) {
     if (c.tipo === "tomada_dupla") {
@@ -79,9 +102,23 @@ function getComponentGeometry(c) {
       geom = new THREE.BoxGeometry(0.06, 0.1, 0.02);
     }
   } else if (c.tipo.startsWith("interruptor")) {
-    geom = new THREE.SphereGeometry(0.04, 16, 16);
+    geom = new THREE.BoxGeometry(0.08, 0.08, 0.02);
   } else if (c.tipo === "quadro") {
     geom = new THREE.BoxGeometry(0.3, 0.4, 0.06);
+  } else if (c.tipo.startsWith("caixa_passagem")) {
+    // Parsear altura do rotulo JSON (mm -> metros). Ex: "280,00" -> 2.80m
+    let alturaM = ALTURAS.caixa_passagem;
+    try {
+      const parsed = JSON.parse(c.rotulo || "{}");
+      if (parsed?.altura) {
+        const altMm = parseFloat(String(parsed.altura).replace(",", "."));
+        if (!isNaN(altMm) && altMm > 0) {
+          alturaM = altMm / 1000; // mm para metros
+        }
+      }
+    } catch { }
+    geom = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+    yFinal = alturaM;
   } else if (c.tipo.startsWith("passagem")) {
     geom = new THREE.CylinderGeometry(0.02, 0.02, 2.8, 8);
     yFinal = 1.4;
@@ -92,6 +129,23 @@ function getComponentGeometry(c) {
   }
 
   return { geom, cor, yFinal, extraMesh, yAlt };
+}
+
+// ─── Helper: calcular posição 3D de um componente (rente à parede) ───────────
+function getComponentPosition3D(c, yFinal) {
+  const isWallComp = c.tipo.startsWith("tomada") || c.tipo.startsWith("interruptor") || c.tipo === "quadro";
+  let posX = c.x;
+  let posZ = -c.y;
+
+  if (isWallComp) {
+    // Projetar para a superfície da parede (metade da espessura 0.06m + espelho 0.005m)
+    const rotRad = ((c.rotacao || 0) * Math.PI) / 180;
+    const surfaceOffset = 0.065;
+    posX += Math.sin(rotRad) * surfaceOffset;
+    posZ -= Math.cos(rotRad) * surfaceOffset;
+  }
+
+  return { posX, posY: yFinal || ALTURAS[c.tipo] || ALTURAS.outro, posZ };
 }
 
 // ─── Gera uma chave de grupo para InstancedMesh ─────────────────────────────
@@ -139,11 +193,15 @@ export default function Canvas3D({
   const canvasRef = useRef(null);
   const [wallOpacity, setWallOpacity] = useState(0.3);
   const [layerConfigs, setLayerConfigs] = useState({});
+  const [modoDiaNoite, setModoDiaNoite] = useState(
+    document.documentElement.getAttribute("data-theme") === "light" ? "dia" : "noite"
+  );
 
   // Refs para objetos Three.js que precisam de disposal
   const sceneObjectsRef = useRef([]);
   const geometriesRef = useRef([]);
   const materialsRef = useRef([]);
+  const conduitMeshesRef = useRef([]);  // Meshes de condutos para controlo de visibilidade
   const extraMeshesRef = useRef([]);
 
   // Refs para o loop de render
@@ -151,6 +209,8 @@ export default function Canvas3D({
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
   const controlsRef = useRef(null);
+  const savedCameraPosRef = useRef(null);
+  const savedCameraTargetRef = useRef(null);
   const needsRenderRef = useRef(false);
   const animFrameIdRef = useRef(null);
   const isDisposedRef = useRef(false);
@@ -207,10 +267,11 @@ export default function Canvas3D({
     isDisposedRef.current = false;
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight;
+    const isDia = modoDiaNoite === "dia";
 
     // 1. Cenário e Renderer
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x111827);
+    scene.background = new THREE.Color(isDia ? 0xf1f5f9 : 0x0f172a);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
@@ -219,6 +280,8 @@ export default function Canvas3D({
     const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     rendererRef.current = renderer;
 
     // 2. Controlos da Câmara
@@ -229,23 +292,30 @@ export default function Canvas3D({
     controls.addEventListener("change", () => requestRender());
     controlsRef.current = controls;
 
-    // 3. Luzes
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    // 3. Luzes (Dia vs Noite)
+    const ambColor = isDia ? 0xffffff : 0x38bdf8;
+    const ambIntensity = isDia ? 0.8 : 0.35;
+    const ambientLight = new THREE.AmbientLight(ambColor, ambIntensity);
     scene.add(ambientLight);
     sceneObjectsRef.current.push(ambientLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(20, 40, 20);
+    const dirColor = isDia ? 0xfffaed : 0x94a3b8;
+    const dirIntensity = isDia ? 1.2 : 0.4;
+    const dirLight = new THREE.DirectionalLight(dirColor, dirIntensity);
+    dirLight.position.set(20, 50, 20);
     scene.add(dirLight);
     sceneObjectsRef.current.push(dirLight);
 
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
+    const skyColor = isDia ? 0xe0f2fe : 0x1e293b;
+    const groundColor = isDia ? 0x94a3b8 : 0x0f172a;
+    const hemiIntensity = isDia ? 0.7 : 0.3;
+    const hemiLight = new THREE.HemisphereLight(skyColor, groundColor, hemiIntensity);
     hemiLight.position.set(0, 20, 0);
     scene.add(hemiLight);
     sceneObjectsRef.current.push(hemiLight);
 
-    // 4. Determinar centro e limites
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    // 4. Determinar centro e limites (com Z = -Y)
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
 
     rooms.forEach((r) => {
       try {
@@ -254,26 +324,26 @@ export default function Canvas3D({
           geojson.coordinates[0].forEach((pt) => {
             minX = Math.min(minX, pt[0]);
             maxX = Math.max(maxX, pt[0]);
-            minY = Math.min(minY, pt[1]);
-            maxY = Math.max(maxY, pt[1]);
+            minZ = Math.min(minZ, -pt[1]);
+            maxZ = Math.max(maxZ, -pt[1]);
           });
         }
-      } catch (e) {}
+      } catch (e) { }
     });
 
     if (geometria) {
       (geometria.linhas || []).forEach((l) => {
         minX = Math.min(minX, l.x1, l.x2);
         maxX = Math.max(maxX, l.x1, l.x2);
-        minY = Math.min(minY, l.y1, l.y2);
-        maxY = Math.max(maxY, l.y1, l.y2);
+        minZ = Math.min(minZ, -l.y1, -l.y2);
+        maxZ = Math.max(maxZ, -l.y1, -l.y2);
       });
       (geometria.polilinhas || []).forEach((poli) => {
         (poli.pontos || []).forEach((pt) => {
           minX = Math.min(minX, pt.x);
           maxX = Math.max(maxX, pt.x);
-          minY = Math.min(minY, pt.y);
-          maxY = Math.max(maxY, pt.y);
+          minZ = Math.min(minZ, -pt.y);
+          maxZ = Math.max(maxZ, -pt.y);
         });
       });
     }
@@ -281,25 +351,32 @@ export default function Canvas3D({
     (componentes || []).forEach((c) => {
       minX = Math.min(minX, c.x);
       maxX = Math.max(maxX, c.x);
-      minY = Math.min(minY, c.y);
-      maxY = Math.max(maxY, c.y);
+      minZ = Math.min(minZ, -c.y);
+      maxZ = Math.max(maxZ, -c.y);
     });
 
     if (minX === Infinity) {
-      minX = -10; maxX = 10; minY = -10; maxY = 10;
+      minX = -10; maxX = 10; minZ = -10; maxZ = 10;
     }
 
     const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    const maxDim = Math.max(maxX - minX, maxY - minY, 10);
+    const centerZ = (minZ + maxZ) / 2;
+    const maxDim = Math.max(maxX - minX, maxZ - minZ, 10);
 
-    camera.position.set(centerX, maxDim * 1.0, centerY + maxDim * 1.0);
-    controls.target.set(centerX, 0, centerY);
+    if (savedCameraPosRef.current && savedCameraTargetRef.current) {
+      camera.position.copy(savedCameraPosRef.current);
+      controls.target.copy(savedCameraTargetRef.current);
+    } else {
+      camera.position.set(centerX, maxDim * 1.0, centerZ + maxDim * 1.0);
+      controls.target.set(centerX, 0, centerZ);
+    }
     controls.update();
 
     // 5. Grelha
-    const gridHelper = new THREE.GridHelper(200, 200, 0x4b5563, 0x1f2937);
-    gridHelper.position.set(centerX, -0.05, centerY);
+    const gridCenterColor = isDia ? 0x94a3b8 : 0x4b5563;
+    const gridLineColor = isDia ? 0xcbd5e1 : 0x1f2937;
+    const gridHelper = new THREE.GridHelper(200, 200, gridCenterColor, gridLineColor);
+    gridHelper.position.set(centerX, -0.05, centerZ);
     scene.add(gridHelper);
     sceneObjectsRef.current.push(gridHelper);
 
@@ -358,7 +435,7 @@ export default function Canvas3D({
         if (!ehCamadaVao) continue;
 
         const dx1 = l1.x2 - l1.x1, dy1 = l1.y2 - l1.y1;
-        const len1 = Math.sqrt(dx1*dx1 + dy1*dy1);
+        const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
         if (len1 < 0.3 || len1 > 2.4) continue;
         const ux1 = dx1 / len1, uy1 = dy1 / len1;
 
@@ -368,7 +445,7 @@ export default function Canvas3D({
           if (!(name2.includes("door") || name2.includes("wind") || name2 === "4" || name2 === "5")) continue;
 
           const dx2 = l2.x2 - l2.x1, dy2 = l2.y2 - l2.y1;
-          const len2 = Math.sqrt(dx2*dx2 + dy2*dy2);
+          const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
           if (len2 < 0.3 || len2 > 2.4) continue;
           const ux2 = dx2 / len2, uy2 = dy2 / len2;
 
@@ -385,19 +462,21 @@ export default function Canvas3D({
       const wallsToCreate = [], sillsToCreate = [], headersToCreate = [], glassesToCreate = [];
 
       linesForAnalysis.forEach((l, index) => {
-        linePoints.push(new THREE.Vector3(l.x1, 0.01, l.y1));
-        linePoints.push(new THREE.Vector3(l.x2, 0.01, l.y2));
+        const z1 = -l.y1;
+        const z2 = -l.y2;
+        linePoints.push(new THREE.Vector3(l.x1, 0.01, z1));
+        linePoints.push(new THREE.Vector3(l.x2, 0.01, z2));
 
         const layer = l.layer;
         if (!layer) return;
         const config = layerConfigs[layer] || "mobiliario";
         if (config === "mobiliario") return;
 
-        const dx = l.x2 - l.x1, dz = l.y2 - l.y1;
-        const len = Math.sqrt(dx*dx + dz*dz);
+        const dx = l.x2 - l.x1, dz = z2 - z1;
+        const len = Math.sqrt(dx * dx + dz * dz);
         if (len < 0.15) return;
         const angle = Math.atan2(dz, dx);
-        const lineItem = { x1: l.x1, z1: l.y1, x2: l.x2, z2: l.y2, len, dx, dz, angle };
+        const lineItem = { x1: l.x1, z1, x2: l.x2, z2, len, dx, dz, angle };
 
         if (config === "parede") {
           wallsToCreate.push(lineItem);
@@ -504,7 +583,7 @@ export default function Canvas3D({
         geometriesRef.current.push(circleGeom);
         const circleMat = new THREE.MeshBasicMaterial({ color: 0x4b5563, side: THREE.DoubleSide });
         const circleMesh = new THREE.Mesh(circleGeom, circleMat);
-        circleMesh.position.set(c.cx, 0.015, c.cy);
+        circleMesh.position.set(c.cx, 0.015, -c.cy);
         circleMesh.rotation.x = Math.PI / 2;
         scene.add(circleMesh);
         sceneObjectsRef.current.push(circleMesh);
@@ -521,10 +600,10 @@ export default function Canvas3D({
         const geojson = JSON.parse(room.poligono_geojson);
         if (!geojson.coordinates || !geojson.coordinates[0]) return;
         const coords = geojson.coordinates[0];
-        const rx0 = coords[0][0], ry0 = coords[0][1];
-        const rx1 = coords[2][0], ry1 = coords[2][1];
-        const rleft = Math.min(rx0, rx1), rbottom = Math.min(ry0, ry1);
-        const rw = Math.abs(rx1 - rx0), rh = Math.abs(ry1 - ry0);
+        const rx0 = coords[0][0], rz0 = -coords[0][1];
+        const rx1 = coords[2][0], rz1 = -coords[2][1];
+        const rleft = Math.min(rx0, rx1), rz_min = Math.min(rz0, rz1);
+        const rw = Math.abs(rx1 - rx0), rh = Math.abs(rz1 - rz0);
         if (rw <= 0.1 || rh <= 0.1) return;
 
         const nome_lower = (room.nome || "").toLowerCase();
@@ -539,7 +618,8 @@ export default function Canvas3D({
         const floorGeom = new THREE.BoxGeometry(rw, 0.05, rh);
         const floorMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.8, metalness: 0.1 });
         const floorMesh = new THREE.Mesh(floorGeom, floorMat);
-        floorMesh.position.set(rleft + rw / 2, -0.025, rbottom + rh / 2);
+        floorMesh.position.set(rleft + rw / 2, -0.025, rz_min + rh / 2);
+        floorMesh.receiveShadow = true;
         scene.add(floorMesh);
         sceneObjectsRef.current.push(floorMesh);
         geometriesRef.current.push(floorGeom);
@@ -561,19 +641,19 @@ export default function Canvas3D({
         const matrix4 = new THREE.Matrix4();
         const pos = new THREE.Vector3();
 
-        pos.set(rleft + esp/2, altP/2, rbottom + rh/2);
+        pos.set(rleft + esp / 2, altP / 2, rz_min + rh / 2);
         matrix4.makeTranslation(pos.x, pos.y, pos.z);
         wLeft.applyMatrix4(matrix4);
 
-        pos.set(rleft + rw - esp/2, altP/2, rbottom + rh/2);
+        pos.set(rleft + rw - esp / 2, altP / 2, rz_min + rh / 2);
         matrix4.makeTranslation(pos.x, pos.y, pos.z);
         wRight.applyMatrix4(matrix4);
 
-        pos.set(rleft + rw/2, altP/2, rbottom + esp/2);
+        pos.set(rleft + rw / 2, altP / 2, rz_min + esp / 2);
         matrix4.makeTranslation(pos.x, pos.y, pos.z);
         wBottom.applyMatrix4(matrix4);
 
-        pos.set(rleft + rw/2, altP/2, rbottom + rh - esp/2);
+        pos.set(rleft + rw / 2, altP / 2, rz_min + rh - esp / 2);
         matrix4.makeTranslation(pos.x, pos.y, pos.z);
         wTop.applyMatrix4(matrix4);
 
@@ -591,42 +671,103 @@ export default function Canvas3D({
         const mergedWalls = mergeGeometries(roomWallGeometries, false);
         geometriesRef.current.push(mergedWalls);
         const mergedWallMesh = new THREE.Mesh(mergedWalls, trackedMaterials[trackedMaterials.length - 1]);
+        mergedWallMesh.castShadow = true;
+        mergedWallMesh.receiveShadow = true;
         scene.add(mergedWallMesh);
         sceneObjectsRef.current.push(mergedWallMesh);
       } catch (e) {
         console.warn("Merge de geometrias de paredes falhou, a usar individuais:", e);
-        // Fallback: usar geometrias individuais (neste caso já foram adicionadas via applyMatrix4,
-        // mas precisamos de criar meshes para elas)
       }
     }
 
-    // ─── 8. Componentes Elétricos — InstancedMesh ────────────────────────────
-    // Agrupar componentes por tipo de geometria + cor
+    // ─── 8. Componentes Elétricos — InstancedMesh + Iluminação Noite ──────────
     const compGroups = new Map(); // groupKey -> { comps: [], geom: null, mat: null, cor: number }
 
     componentes.forEach((c) => {
       const { geom, cor, yFinal, extraMesh } = getComponentGeometry(c);
+
+      const watts = c.potencia_w || 0;
+
+      // Simulação de iluminação real de lâmpadas acesas no modo noite apenas se tiverem potência definida (W > 0)
+      if (c.tipo.startsWith("lampada") && !isDia && watts > 0) {
+        // 1. A LUZ REAL (Omnidirecional 360º que ilumina todo o espaço e paredes da sala)
+        const lightIntensity = Math.min(3.5, Math.max(1.2, 1.0 + watts / 30));
+        const lightDistance = Math.max(5.0, 4.0 + Math.sqrt(watts) * 0.5);
+
+        const lampLight = new THREE.PointLight(0xffedd5, lightIntensity, lightDistance, 1.5);
+        lampLight.position.set(c.x, yFinal - 0.1, -c.y);
+        lampLight.castShadow = true;
+        lampLight.shadow.mapSize.width = 512;
+        lampLight.shadow.mapSize.height = 512;
+        lampLight.shadow.bias = -0.002;
+        lampLight.shadow.radius = 4;
+        scene.add(lampLight);
+        sceneObjectsRef.current.push(lampLight);
+
+        // 2. HALO DE BRILHO NA PRÓPRIA LÂMPADA (Glare/Flare realista)
+        const haloMat = new THREE.SpriteMaterial({
+          map: getGlowTexture(),
+          color: 0xfffde6,
+          transparent: true,
+          opacity: 0.8,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const haloSprite = new THREE.Sprite(haloMat);
+        const haloScale = Math.min(1.2, Math.max(0.4, 0.4 + (watts / 100) * 0.5));
+        haloSprite.scale.set(haloScale, haloScale, 1.0);
+        haloSprite.position.set(c.x, yFinal - 0.05, -c.y);
+        scene.add(haloSprite);
+        sceneObjectsRef.current.push(haloSprite);
+
+        // 3. FAKE GLOW NO CHÃO (Projeção radial desfocada subtil)
+        const floorGlowRadius = Math.min(2.5, Math.max(0.8, 0.8 + (watts / 100) * 0.9));
+        const spotPlaneGeom = new THREE.PlaneGeometry(floorGlowRadius * 2.5, floorGlowRadius * 2.5);
+        geometriesRef.current.push(spotPlaneGeom);
+
+        const spotFloorMat = new THREE.MeshBasicMaterial({
+          color: 0xfef08a,
+          map: getGlowTexture(),
+          transparent: true,
+          opacity: 0.35,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+        });
+        trackedMaterials.push(spotFloorMat);
+
+        const spotFloorMesh = new THREE.Mesh(spotPlaneGeom, spotFloorMat);
+        spotFloorMesh.position.set(c.x, 0.01, -c.y);
+        spotFloorMesh.rotation.x = -Math.PI / 2;
+        scene.add(spotFloorMesh);
+        sceneObjectsRef.current.push(spotFloorMesh);
+      }
+
       if (geom) {
         const key = getGeometryGroupKey(geom, cor);
         if (key) {
           if (!compGroups.has(key)) {
             compGroups.set(key, { comps: [], geom: geom.clone(), cor });
           }
-          // Propagar extraMesh para que seja adicionado à cena durante o rendering do grupo
           compGroups.get(key).comps.push({ ...c, yFinal, geomKey: key, extraMesh });
         } else {
-          // Fallback: componente com geometria complexa, renderizar individual
+          const rotRad = ((c.rotacao || 0) * Math.PI) / 180;
+          const emissiveInt = watts > 0 ? (isDia ? 0.2 : 2.0) : 0.0;
           const mat = new THREE.MeshStandardMaterial({
             color: cor, roughness: 0.3, metalness: 0.2,
-            emissive: cor, emissiveIntensity: c.tipo.startsWith("lampada") ? 0.4 : 0.0,
+            emissive: cor, emissiveIntensity: c.tipo.startsWith("lampada") ? emissiveInt : 0.0,
           });
+          const { posX, posY, posZ } = getComponentPosition3D(c, yFinal);
           const mesh = new THREE.Mesh(geom, mat);
-          mesh.position.set(c.x, yFinal, c.y);
+          mesh.position.set(posX, posY, posZ);
+          mesh.rotation.y = -rotRad;
           if (c.tipo === "camera") mesh.rotation.x = Math.PI / 6;
           scene.add(mesh);
           sceneObjectsRef.current.push(mesh);
 
           if (extraMesh) {
+            extraMesh.position.set(posX, posY, posZ);
+            extraMesh.rotation.y = -rotRad;
             scene.add(extraMesh);
             sceneObjectsRef.current.push(extraMesh);
           }
@@ -639,9 +780,11 @@ export default function Canvas3D({
       const { comps, geom: groupGeom, cor } = group;
       if (comps.length === 0) return;
 
+      const hasPoweredLamps = comps.some((c) => (c.potencia_w || 0) > 0);
+      const emissiveInt = hasPoweredLamps ? (isDia ? 0.2 : 2.0) : 0.0;
       const mat = new THREE.MeshStandardMaterial({
         color: cor, roughness: 0.3, metalness: 0.2,
-        emissive: cor, emissiveIntensity: cor === 0xf59e0b ? 0.4 : 0.0, // lampadas emissive
+        emissive: cor, emissiveIntensity: cor === 0xf59e0b ? emissiveInt : 0.0,
       });
       trackedMaterials.push(mat);
 
@@ -654,25 +797,19 @@ export default function Canvas3D({
       const tempScale = new THREE.Vector3(1, 1, 1);
 
       comps.forEach((c, idx) => {
-        tempPos.set(c.x, c.yFinal || ALTURAS[c.tipo] || ALTURAS.outro, c.y);
+        const { posX, posY, posZ } = getComponentPosition3D(c, c.yFinal);
+        tempPos.set(posX, posY, posZ);
+        const rotRad = ((c.rotacao || 0) * Math.PI) / 180;
+        const euler = new THREE.Euler(c.tipo === "camera" ? Math.PI / 6 : 0, -rotRad, 0, 'YXZ');
+        tempRot.setFromEuler(euler);
         tempMatrix.compose(tempPos, tempRot, tempScale);
         instanced.setMatrixAt(idx, tempMatrix);
 
-        // Extra meshes (cabos, hastes)
         if (c.extraMesh) {
+          c.extraMesh.position.set(posX, posY, posZ);
+          c.extraMesh.rotation.y = -rotRad;
           scene.add(c.extraMesh);
           sceneObjectsRef.current.push(c.extraMesh);
-        }
-      });
-
-      // Aplicar rotação para câmaras (caso especial)
-      comps.forEach((c, idx) => {
-        if (c.tipo === "camera") {
-          const dummy = new THREE.Object3D();
-          dummy.position.set(c.x, c.yFinal, c.y);
-          dummy.rotation.x = Math.PI / 6;
-          dummy.updateMatrix();
-          instanced.setMatrixAt(idx, dummy.matrix);
         }
       });
 
@@ -681,47 +818,119 @@ export default function Canvas3D({
     });
 
     // ─── 9. Conexões com cor por circuito e rotas realistas ─────────────────
-    // Mapa de cores por circuito (ID -> cor)
     const circuitColors = {};
     const palette = [0x6366f1, 0x22c55e, 0xf59e0b, 0xef4444, 0xec4899, 0x14b8a6, 0x8b5cf6, 0x3b82f6];
     circuitos.forEach((circ, i) => {
       circuitColors[circ.id] = palette[i % palette.length];
     });
 
+    const conduitRadius = 0.018; // raio do tubo conduto (~36mm diâmetro real)
+    const conduitSegments = 8;   // segmentos radiais
+    conduitMeshesRef.current = [];
+
     conexoes.forEach((conn) => {
       const orig = componentes.find((c) => c.id === conn.origem_id);
       const dest = componentes.find((c) => c.id === conn.destino_id);
       if (!orig || !dest) return;
 
-      // Determinar cor pelo circuito do componente de origem
       const corCircuito = orig.circuit_id ? (circuitColors[orig.circuit_id] || 0x8b5cf6) : 0x8b5cf6;
 
       const y1 = ALTURAS[orig.tipo] || ALTURAS.outro;
       const y2 = ALTURAS[dest.tipo] || ALTURAS.outro;
-      const p1 = new THREE.Vector3(orig.x, y1, orig.y);
-      const p2 = new THREE.Vector3(dest.x, y2, dest.y);
+      const p1 = new THREE.Vector3(orig.x, y1, -orig.y);
+      const p2 = new THREE.Vector3(dest.x, y2, -dest.y);
 
-      // Rota realista: sobe até ao tecto (2.7m) e desce para o destino
-      const tectoY = Math.max(y1, y2, 2.7) + 0.15;
-      const midPoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-      midPoint.y = tectoY;
+      let pathCurve;
+      const hasCurve = conn.c1_x != null && conn.c1_y != null;
 
-      // Curva com 3 pontos de controlo para um percurso mais suave
-      const c1 = new THREE.Vector3(p1.x, tectoY, p1.z);
-      const c2 = new THREE.Vector3(p2.x, tectoY, p2.z);
-      const curve = new THREE.CubicBezierCurve3(p1, c1, c2, p2);
-      const connGeom = new THREE.BufferGeometry().setFromPoints(curve.getPoints(24));
-      geometriesRef.current.push(connGeom);
+      if (hasCurve) {
+        // Conduto curvado — usar ponto de controlo da BD para Bezier
+        const tectoY = Math.max(y1, y2, 2.7) + 0.15;
+        const c1 = new THREE.Vector3(p1.x, tectoY, p1.z);
+        const c2 = new THREE.Vector3(p2.x, tectoY, p2.z);
+        pathCurve = new THREE.CubicBezierCurve3(p1, c1, c2, p2);
+      } else {
+        // Conduto recto — criar curvas de 90º para entrada em tomadas e interruptores
+        const topY = Math.max(y1, y2, 2.7) + 0.05;
 
-      const connMat = new THREE.LineBasicMaterial({
-        color: corCircuito,
-        linewidth: 1,
+        // Helper para obter pontos de entrada com cotovelo de 90 graus
+        const getWallEntryPoints = (comp, yComp, tY) => {
+          const isWallComp = comp.tipo.startsWith("tomada") || comp.tipo.startsWith("interruptor") || comp.tipo.startsWith("quadro");
+          const { posX, posY, posZ } = getComponentPosition3D(comp, yComp);
+          const ptBase = new THREE.Vector3(posX, posY, posZ);
+
+          if (!isWallComp) {
+            return {
+              points: [ptBase, new THREE.Vector3(comp.x, tY, -comp.y)],
+            };
+          }
+
+          // Para tomadas e interruptores, a tubagem desce dentro da parede (atrás do espelho)
+          const rotRad = ((comp.rotacao || 0) * Math.PI) / 180;
+          const depthOffset = 0.05;
+          const backX = -Math.sin(rotRad) * depthOffset;
+          const backZ = Math.cos(rotRad) * depthOffset;
+
+          const pBox = new THREE.Vector3(posX, posY, posZ);
+          const pEntry = new THREE.Vector3(posX + backX, posY, posZ + backZ);
+          const pElbow = new THREE.Vector3(posX + backX, tY, posZ + backZ);
+
+          return {
+            points: [pBox, pEntry, pElbow],
+          };
+        };
+
+        const origRoute = getWallEntryPoints(orig, y1, topY);
+        const destRoute = getWallEntryPoints(dest, y2, topY);
+
+        // Combinar pontos da origem até ao topo, atravessar até ao topo do destino e descer em 90º
+        const pathPoints = [
+          ...origRoute.points,
+          ...destRoute.points.slice().reverse(),
+        ];
+
+        pathCurve = new THREE.CatmullRomCurve3(pathPoints, false, "catmullrom", 0.0);
+      }
+
+      // Tubo cilíndrico realista (estilo eletroduto PVC corrugado)
+      const tubeGeom = new THREE.TubeGeometry(pathCurve, 32, conduitRadius, conduitSegments, false);
+      geometriesRef.current.push(tubeGeom);
+
+      const tubeMat = new THREE.MeshStandardMaterial({
+        color: 0x9ca3af,       // cinza PVC
+        roughness: 0.65,
+        metalness: 0.05,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.92,
+        depthTest: true,
       });
-      const connLine = new THREE.Line(connGeom, connMat);
-      scene.add(connLine);
-      sceneObjectsRef.current.push(connLine);
+
+      const tubeMesh = new THREE.Mesh(tubeGeom, tubeMat);
+      tubeMesh.renderOrder = 10; // renderizar depois das paredes
+      scene.add(tubeMesh);
+      sceneObjectsRef.current.push(tubeMesh);
+      conduitMeshesRef.current.push(tubeMesh);
+
+      // Fio interior colorido pelo circuito (mais fino, dentro do tubo)
+      const wireGeom = new THREE.TubeGeometry(pathCurve, 32, conduitRadius * 0.35, 6, false);
+      geometriesRef.current.push(wireGeom);
+
+      const wireMat = new THREE.MeshStandardMaterial({
+        color: corCircuito,
+        roughness: 0.4,
+        metalness: 0.1,
+        emissive: corCircuito,
+        emissiveIntensity: 0.3,
+        transparent: true,
+        opacity: 0.92,
+        depthTest: true,
+      });
+
+      const wireMesh = new THREE.Mesh(wireGeom, wireMat);
+      wireMesh.renderOrder = 11;
+      scene.add(wireMesh);
+      sceneObjectsRef.current.push(wireMesh);
+      conduitMeshesRef.current.push(wireMesh);
     });
 
     // ─── Primeiro render ────────────────────────────────────────────────────
@@ -742,6 +951,12 @@ export default function Canvas3D({
     // ─── Cleanup: disposal rigoroso ─────────────────────────────────────────
     return () => {
       isDisposedRef.current = true;
+      if (cameraRef.current) {
+        savedCameraPosRef.current = cameraRef.current.position.clone();
+      }
+      if (controlsRef.current) {
+        savedCameraTargetRef.current = controlsRef.current.target.clone();
+      }
       if (animFrameIdRef.current) {
         cancelAnimationFrame(animFrameIdRef.current);
         animFrameIdRef.current = null;
@@ -769,7 +984,7 @@ export default function Canvas3D({
       scene.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geometria, componentes, conexoes, rooms, layerConfigs, wallOpacity]);
+  }, [geometria, componentes, conexoes, rooms, layerConfigs, wallOpacity, modoDiaNoite]);
 
   // Atualizar opacidade
   const handleOpacityChange = useCallback((e) => {
@@ -777,6 +992,14 @@ export default function Canvas3D({
     setWallOpacity(val);
     materialsRef.current.forEach((mat) => {
       if (mat && typeof mat.opacity !== 'undefined') mat.opacity = val;
+    });
+    // Quando opacidade das paredes < 60%, tornar condutos visíveis através das paredes
+    const showThroughWalls = val < 0.6;
+    conduitMeshesRef.current.forEach((mesh) => {
+      if (mesh && mesh.material) {
+        mesh.material.depthTest = !showThroughWalls;
+        mesh.material.needsUpdate = true;
+      }
     });
   }, []);
 
@@ -787,6 +1010,14 @@ export default function Canvas3D({
       <div className="canvas3d-overlay">
         <div className="canvas3d-card">
           <div className="canvas3d-card-title">🔍 Visualização 3D</div>
+
+          <button
+            type="button"
+            className="theme-toggle-3d"
+            onClick={() => setModoDiaNoite((prev) => (prev === "dia" ? "noite" : "dia"))}
+          >
+            {modoDiaNoite === "dia" ? "☀️ Modo Dia (Solar)" : "🌙 Modo Noite (Iluminação)"}
+          </button>
 
           <div className="control-group">
             <label>Opacidade das Paredes: {Math.round(wallOpacity * 100)}%</label>

@@ -2,6 +2,7 @@ import React from "react";
 import FormLampada from "./FormLampada";
 import FormInterruptor from "./FormInterruptor";
 import FormTomada from "./FormTomada";
+import FormCaixaPassagem from "./FormCaixaPassagem";
 import PainelPlanta from "./PainelPlanta";
 import { ICON_MAP } from "../Icons/ElectricalIcons";
 import "./Sidebar.css";
@@ -46,6 +47,7 @@ const LABELS_TIPO = {
   campainha: "Campainha / Interfone",
   camera: "Câmara CCTV",
 
+  caixa_passagem: "Caixa de Passagem",
   passagem_sobe: "Caixa de Passagem (Sobe)",
   passagem_desce: "Caixa de Passagem (Desce)",
 
@@ -168,6 +170,14 @@ function PainelPropriedades({
       case "tomada":
         return (
           <FormTomada
+            data={electricalData}
+            onChange={handleChange}
+            onToggleVisibility={handleToggleVisibility}
+          />
+        );
+      case "passagem":
+        return (
+          <FormCaixaPassagem
             data={electricalData}
             onChange={handleChange}
             onToggleVisibility={handleToggleVisibility}

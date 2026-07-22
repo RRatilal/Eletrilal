@@ -70,6 +70,8 @@ export const api = {
     }),
   dimensionarCircuito: (circuitId) =>
     request(`/circuits/${circuitId}/dimensionamento`, { method: "POST" }),
+  dimensionarTodosCircuitos: (projectId) =>
+    request(`/projects/${projectId}/dimensionamento-global`, { method: "POST" }),
   atualizarCircuito: (circuitId, dados) =>
     request(`/circuits/${circuitId}`, {
       method: "PATCH",

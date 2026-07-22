@@ -366,6 +366,15 @@ def extrair_planta_pdf(caminho_pdf: str, usar_cache: bool = True) -> dict:
     with pdfplumber.open(caminho_pdf) as pdf:
         paginas = len(pdf.pages)
 
+        # Verificar se o PDF é digitalizado/rasterizado (sem texto nem retângulos vetoriais em nenhuma página)
+        total_rects = sum(len(page.rects) for page in pdf.pages)
+        total_chars = sum(len(page.chars) for page in pdf.pages)
+        if total_rects == 0 and total_chars == 0:
+            raise ValueError(
+                "O ficheiro PDF não contém elementos vetoriais nem texto extraível (PDF rasterizado/imagem). "
+                "Por favor, use um PDF exportado diretamente do software CAD com elementos vetoriais."
+            )
+
         for i, page in enumerate(pdf.pages):
             rects = _filtrar_rects(page.rects)
 

@@ -481,6 +481,20 @@ export function IconCamera() {
 }
 
 /**
+ * Caixa de Passagem (Junction Box)
+ * Quadrado com X (diagonais) — sem texto
+ */
+export function IconCaixaPassagem() {
+  return (
+    <SvgIcon>
+      <rect x="15" y="15" width="70" height="70" />
+      <line x1="15" y1="15" x2="85" y2="85" />
+      <line x1="85" y1="15" x2="15" y2="85" />
+    </SvgIcon>
+  );
+}
+
+/**
  * Passagem Sobe
  */
 export function IconPassagemSobe() {
@@ -553,6 +567,7 @@ export const ICON_MAP = {
   camera: IconCamera,
 
   // Passagem
+  caixa_passagem: IconCaixaPassagem,
   passagem_sobe: IconPassagemSobe,
   passagem_desce: IconPassagemDesce,
 
