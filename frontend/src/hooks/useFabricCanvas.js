@@ -11,6 +11,63 @@ const GRID_MINOR = 20;  // minor grid every 20px (0.5m)
 const GRID_MAJOR = 100; // major grid every 100px (2.5m)
 
 /**
+ * Utilitário matemático: calcula o ponto mais próximo num segmento de reta AB
+ * e a distância ortogonal até ao ponto P(px, py).
+ */
+export function getClosestPointOnSegment(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+
+  if (lenSq === 0) {
+    const distance = Math.hypot(px - x1, py - y1);
+    return { x: x1, y: y1, distance, lineAngle: 0, dx: 0, dy: 0 };
+  }
+
+  let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+
+  const projX = x1 + t * dx;
+  const projY = y1 + t * dy;
+  const distance = Math.hypot(px - projX, py - projY);
+  const lineAngle = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+  return { x: projX, y: projY, distance, lineAngle, dx, dy };
+}
+
+/**
+ * Utilitário: calcula o ângulo de rotação perpendicular (normal à parede)
+ * orientado para o lado para onde o utilizador está a arrastar o componente.
+ */
+export function getPerpendicularSnapAngle(lineAngle, projX, projY, dragX, dragY) {
+  // Os símbolos de componentes (tomada, interruptor) a angle=0 já apontam "para cima"
+  // (perpendicular a uma parede horizontal). Logo usamos lineAngle directamente
+  // e lineAngle+180 para escolher o lado da parede.
+  const side1 = lineAngle;
+  const side2 = lineAngle + 180;
+
+  const vDragX = dragX - projX;
+  const vDragY = dragY - projY;
+
+  if (Math.hypot(vDragX, vDragY) < 0.001) {
+    return ((side1 % 360) + 360) % 360;
+  }
+
+  const dragAngle = (Math.atan2(vDragY, vDragX) * 180) / Math.PI;
+
+  const angleDiff = (a, b) => {
+    let diff = ((a - b) % 360 + 540) % 360 - 180;
+    return diff;
+  };
+
+  const diff1 = Math.abs(angleDiff(side1, dragAngle));
+  const diff2 = Math.abs(angleDiff(side2, dragAngle));
+
+  const chosen = diff1 <= diff2 ? side1 : side2;
+  return ((chosen % 360) + 360) % 360;
+}
+
+/**
  * Hook que inicializa e gere o canvas Fabric.js (fullscreen).
  * Suporta: dark mode, zoom (scroll), pan (Space+drag ou middle-click),
  * grelha dinâmica, e coordenadas do rato.
@@ -27,6 +84,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
   const floorPlanScaleRef = useRef(1);   // Fator de escala aplicado pela calibração
   const floorPlanClipRectRef = useRef(null); // { left, top, width, height } para crop nativo
   const floorPlanModeRef = useRef(null); // 'individual' | 'agrupado'
+  const wallLinesSpatialGridRef = useRef({ cellSize: 150, grid: new Map(), lines: [] });
 
   function getCanvasBg() {
     try {
@@ -116,6 +174,60 @@ export function useFabricCanvas(canvasElRef, containerRef) {
       if (!spaceHeldRef.current) {
         canvas.setCursor("default");
         canvas.selection = true;
+      }
+    });
+
+    // ─── Magnetic Snap to Line com Auto-Rotação (object:moving) ───
+    canvas.on("object:moving", (opt) => {
+      const obj = opt.target;
+      if (!obj) return;
+
+      const edType = obj.electricalData?.type || obj.data?.tipo || obj.tipo || "";
+      const isWallComp =
+        edType.startsWith("tomada") ||
+        edType.startsWith("interruptor") ||
+        edType === "quadro" ||
+        edType.startsWith("caixa_passagem") ||
+        edType.startsWith("passagem");
+
+      if (!isWallComp) return;
+
+      const center = obj.getCenterPoint();
+      const px = center.x;
+      const py = center.y;
+      const SNAP_THRESHOLD = 20; // 20px de tolerância
+
+      const candidates = queryWallLinesGrid(px, py, SNAP_THRESHOLD);
+      if (candidates.length === 0) return;
+
+      let closest = null;
+      let minDist = Infinity;
+
+      for (const line of candidates) {
+        const res = getClosestPointOnSegment(px, py, line.x1, line.y1, line.x2, line.y2);
+        if (res.distance < minDist) {
+          minDist = res.distance;
+          closest = res;
+        }
+      }
+
+      if (closest && minDist <= SNAP_THRESHOLD) {
+        const snappedAngle = getPerpendicularSnapAngle(closest.lineAngle, closest.x, closest.y, px, py);
+
+        // Deslocamento de 8px para a frente (fora da linha de alvenaria)
+        const offsetPx = 0.5;
+        const rad = (snappedAngle * Math.PI) / 180;
+        const finalX = closest.x + Math.sin(rad) * offsetPx;
+        const finalY = closest.y - Math.cos(rad) * offsetPx;
+
+        obj.setPositionByOrigin(
+          new fabric.Point(finalX, finalY),
+          obj.originX || "center",
+          obj.originY || "center"
+        );
+
+        obj.set("angle", Math.round(snappedAngle));
+        obj.setCoords();
       }
     });
 
@@ -432,6 +544,88 @@ export function useFabricCanvas(canvasElRef, containerRef) {
   // Limite de objetos canvas para alternar entre modo individual e agrupado
   const LIMITE_OBJETOS_INDIVIDUAIS = 2000;
 
+  // ─── Spatial Grid Hash para Magnetic Snap (60 FPS) ─────────────────────────
+  function indexarLinhasGeometria(geometria) {
+    const grid = new Map();
+    const lines = [];
+    const cellSize = 150;
+
+    const converter = (x, y) => ({
+      px: x * ESCALA_PX_POR_METRO,
+      py: -y * ESCALA_PX_POR_METRO,
+    });
+
+    const addLine = (x1, y1, x2, y2) => {
+      const line = { x1, y1, x2, y2 };
+      lines.push(line);
+
+      const minX = Math.min(x1, x2);
+      const maxX = Math.max(x1, x2);
+      const minY = Math.min(y1, y2);
+      const maxY = Math.max(y1, y2);
+
+      const minCol = Math.floor(minX / cellSize);
+      const maxCol = Math.floor(maxX / cellSize);
+      const minRow = Math.floor(minY / cellSize);
+      const maxRow = Math.floor(maxY / cellSize);
+
+      for (let c = minCol; c <= maxCol; c++) {
+        for (let r = minRow; r <= maxRow; r++) {
+          const key = `${c}_${r}`;
+          if (!grid.has(key)) grid.set(key, []);
+          grid.get(key).push(line);
+        }
+      }
+    };
+
+    if (geometria) {
+      (geometria.linhas || []).forEach((l) => {
+        const p1 = converter(l.x1, l.y1);
+        const p2 = converter(l.x2, l.y2);
+        addLine(p1.px, p1.py, p2.px, p2.py);
+      });
+
+      (geometria.polilinhas || []).forEach((poli) => {
+        if (!poli.pontos || poli.pontos.length < 2) return;
+        for (let i = 0; i < poli.pontos.length - 1; i++) {
+          const p1 = converter(poli.pontos[i].x, poli.pontos[i].y);
+          const p2 = converter(poli.pontos[i + 1].x, poli.pontos[i + 1].y);
+          addLine(p1.px, p1.py, p2.px, p2.py);
+        }
+        if (poli.fechada && poli.pontos.length > 2) {
+          const pLast = converter(poli.pontos[poli.pontos.length - 1].x, poli.pontos[poli.pontos.length - 1].y);
+          const pFirst = converter(poli.pontos[0].x, poli.pontos[0].y);
+          addLine(pLast.px, pLast.py, pFirst.px, pFirst.py);
+        }
+      });
+    }
+
+    wallLinesSpatialGridRef.current = { cellSize, grid, lines };
+  }
+
+  function queryWallLinesGrid(px, py, radius = 20) {
+    const { cellSize, grid, lines } = wallLinesSpatialGridRef.current;
+    if (!grid || grid.size === 0) return lines;
+
+    const minCol = Math.floor((px - radius) / cellSize);
+    const maxCol = Math.floor((px + radius) / cellSize);
+    const minRow = Math.floor((py - radius) / cellSize);
+    const maxRow = Math.floor((py + radius) / cellSize);
+
+    const candidatesSet = new Set();
+    for (let c = minCol; c <= maxCol; c++) {
+      for (let r = minRow; r <= maxRow; r++) {
+        const key = `${c}_${r}`;
+        const bucket = grid.get(key);
+        if (bucket) {
+          bucket.forEach((l) => candidatesSet.add(l));
+        }
+      }
+    }
+
+    return Array.from(candidatesSet);
+  }
+
   /**
    * Desenha a geometria da planta no canvas.
    * - Quando N < LIMITE: cada linha é um fabric.Line num único fabric.Group
@@ -451,6 +645,9 @@ export function useFabricCanvas(canvasElRef, containerRef) {
 
     floorPlanScaleRef.current = 1;
     floorPlanClipRectRef.current = null;
+
+    // Indexar linhas da geometria para o algoritmo de Magnetic Snap (60 FPS)
+    indexarLinhasGeometria(geometria);
 
     // Guardar a geometria original como referência
     geometriaRef.current = null;
@@ -1433,30 +1630,43 @@ export function useFabricCanvas(canvasElRef, containerRef) {
   }
 
   /**
-   * Encontra o componente mais próximo do ponto clicado no canvas.
-   * Retorna o componentId ou null.
+   * Encontra o componente sob o clique do rato.
+   * Prioriza o optTarget nativo do Fabric.js e usa distância Euclidiana ao centro como fallback.
    */
-  function encontrarComponenteEm(pointer) {
+  function encontrarComponenteEm(pointer, optTarget = null) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return null;
 
+    // 1. Verificar se o Fabric.js já detetou o componente diretamente no clique
+    if (optTarget) {
+      const targetId = optTarget.data?.componentId || optTarget.electricalData?.componentId;
+      if (targetId) return targetId;
+
+      if (optTarget.group) {
+        const groupId = optTarget.group.data?.componentId || optTarget.group.electricalData?.componentId;
+        if (groupId) return groupId;
+      }
+    }
+
+    // 2. Procura pelo componente com menor distância Euclidiana ao ponto clicado
     const objects = canvas.getObjects();
+    let minDistance = Infinity;
+    let closestComponentId = null;
+    const MAX_TOLERANCE = 25; // 25px de tolerância a partir do centro
+
     for (const obj of objects) {
-      if (obj.data?.componentId) {
-        const bounds = obj.getBoundingRect();
-        // Expand hit area slightly for easier clicking
-        const margin = 10;
-        if (
-          pointer.x >= bounds.left - margin &&
-          pointer.x <= bounds.left + bounds.width + margin &&
-          pointer.y >= bounds.top - margin &&
-          pointer.y <= bounds.top + bounds.height + margin
-        ) {
-          return obj.data.componentId;
+      const compId = obj.data?.componentId;
+      if (compId) {
+        const center = obj.getCenterPoint();
+        const dist = Math.hypot(pointer.x - center.x, pointer.y - center.y);
+        if (dist < minDistance && dist <= MAX_TOLERANCE) {
+          minDistance = dist;
+          closestComponentId = compId;
         }
       }
     }
-    return null;
+
+    return closestComponentId;
   }
 
   /**

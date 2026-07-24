@@ -40,6 +40,21 @@ const LABELS_TIPO = {
 
 const BITOLAS_CABO = ["1.5 mm²", "2.5 mm²", "4.0 mm²", "6.0 mm²", "10.0 mm²", "16.0 mm²", "25.0 mm²", "35.0 mm²"];
 
+function obterRotuloExibicao(c) {
+  if (!c) return "?";
+  if (c.rotulo) {
+    if (typeof c.rotulo === "string" && c.rotulo.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(c.rotulo);
+        if (parsed?.nome) return parsed.nome;
+      } catch {}
+    } else if (c.rotulo !== c.tipo) {
+      return c.rotulo;
+    }
+  }
+  return LABELS_TIPO[c.tipo] || c.tipo || "?";
+}
+
 /**
  * CircuitosPanel — Painel de gestão de circuitos e conexões.
  * Aparece no lado direito quando o botão ⚙ está activo.
@@ -367,11 +382,11 @@ export default function CircuitosPanel({
                   <div className="connection-card-row">
                     <span className="connection-line-icon">🔗</span>
                     <span className="connection-label">
-                      {origem?.rotulo || LABELS_TIPO[origem?.tipo] || origem?.tipo || "?"}
+                      {obterRotuloExibicao(origem)}
                     </span>
                     <span className="connection-arrow">→</span>
                     <span className="connection-label">
-                      {destino?.rotulo || LABELS_TIPO[destino?.tipo] || destino?.tipo || "?"}
+                      {obterRotuloExibicao(destino)}
                     </span>
                   </div>
                   <label className="connection-tipo-label">

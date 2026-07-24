@@ -624,12 +624,12 @@ def criar_conexao(project_id: int, payload: schemas.ConnectionCreate, db: Sessio
         raise HTTPException(status_code=404, detail="Componente de origem ou destino não encontrado neste projeto.")
 
     # Validação: não permitir conexão duplicada (em qualquer direção)
+    from sqlalchemy import or_, and_
     existente = db.query(models.Connection).filter(
         models.Connection.project_id == project_id,
-        (
-            (models.Connection.origem_id == payload.origem_id) & (models.Connection.destino_id == payload.destino_id)
-        ) | (
-            (models.Connection.origem_id == payload.destino_id) & (models.Connection.destino_id == payload.origem_id)
+        or_(
+            and_(models.Connection.origem_id == payload.origem_id, models.Connection.destino_id == payload.destino_id),
+            and_(models.Connection.origem_id == payload.destino_id, models.Connection.destino_id == payload.origem_id),
         )
     ).first()
     if existente:

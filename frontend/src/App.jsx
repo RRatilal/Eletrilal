@@ -112,9 +112,24 @@ function AppContent() {
 
   // ─── Autosave (sem geometria — é carregada da API) ───
   const autosaveData = projeto
-    ? { componentes, circuitos, conexoes, rooms, floorPlanModifications, floorPlanPosition: floorPlanPositionRef.current }
+    ? { componentes, circuitos, conexoes, rooms, floorPlanModifications, floorPlanPosition: floorPlanPositionRef.current, plantaTravada }
     : null;
   const { estado: autosaveEstado, carregar } = useAutosave(projeto?.id, autosaveData);
+
+  // ─── Sincronizar estado de travamento com o grupo da planta no canvas ───
+  useEffect(() => {
+    const grupo = canvasRefs?.floorPlanGroupRef?.current;
+    if (!grupo) return;
+    const isCurrentlyLocked = grupo.selectable === false;
+    if (plantaTravada && !isCurrentlyLocked) {
+      grupo.set({ selectable: false, evented: false, hoverCursor: "default" });
+      canvasInstance?.discardActiveObject();
+      canvasInstance?.renderAll();
+    } else if (!plantaTravada && isCurrentlyLocked) {
+      grupo.set({ selectable: true, evented: true, hoverCursor: "pointer" });
+      canvasInstance?.renderAll();
+    }
+  }, [plantaTravada, canvasRefs, canvasInstance]);
 
   useEffect(() => {
     api.listarProjetos().then(setProjetos).catch((e) => setErro(e.message));
@@ -171,12 +186,17 @@ function AppContent() {
       const autosave = carregar();
       let geoParaUsar = null;
 
-      // Restaurar floor plan modifications e posição do autosave
+      // Restaurar floor plan modifications, posição e estado de travamento do autosave
       if (autosave?.floorPlanModifications) {
         setFloorPlanModifications(autosave.floorPlanModifications);
       }
       if (autosave?.floorPlanPosition) {
         floorPlanPositionRef.current = autosave.floorPlanPosition;
+      }
+      if (autosave?.plantaTravada !== undefined) {
+        setPlantaTravada(autosave.plantaTravada);
+      } else {
+        setPlantaTravada(false);
       }
 
       // Geometria vem sempre da API (DXF original re-processado)
@@ -470,6 +490,7 @@ function AppContent() {
           conexoes={conexoes}
           rooms={rooms}
           modoCabo={modoCabo}
+          plantaTravada={plantaTravada}
           onComponenteCriado={handleComponenteCriado}
           onComponenteAtualizado={handleComponenteAtualizado}
           onComponenteApagado={handleComponenteApagado}

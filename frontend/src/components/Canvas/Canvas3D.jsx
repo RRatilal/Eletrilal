@@ -54,6 +54,7 @@ function getGlowTexture() {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 256, 256);
   glowTextureCache = new THREE.CanvasTexture(canvas);
+  glowTextureCache.flipY = false;
   return glowTextureCache;
 }
 
@@ -281,7 +282,7 @@ export default function Canvas3D({
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     rendererRef.current = renderer;
 
     // 2. Controlos da Câmara
@@ -375,7 +376,8 @@ export default function Canvas3D({
     // 5. Grelha
     const gridCenterColor = isDia ? 0x94a3b8 : 0x4b5563;
     const gridLineColor = isDia ? 0xcbd5e1 : 0x1f2937;
-    const gridHelper = new THREE.GridHelper(200, 200, gridCenterColor, gridLineColor);
+    const gridDivisions = Math.min(100, Math.max(20, Math.ceil(maxDim * 3)));
+    const gridHelper = new THREE.GridHelper(200, gridDivisions, gridCenterColor, gridLineColor);
     gridHelper.position.set(centerX, -0.05, centerZ);
     scene.add(gridHelper);
     sceneObjectsRef.current.push(gridHelper);
@@ -578,22 +580,40 @@ export default function Canvas3D({
       }
 
       // Círculos
-      (geometria.circulos || []).forEach((c) => {
-        const circleGeom = new THREE.RingGeometry(c.raio - 0.02, c.raio, 32);
-        geometriesRef.current.push(circleGeom);
-        const circleMat = new THREE.MeshBasicMaterial({ color: 0x4b5563, side: THREE.DoubleSide });
-        const circleMesh = new THREE.Mesh(circleGeom, circleMat);
-        circleMesh.position.set(c.cx, 0.015, -c.cy);
-        circleMesh.rotation.x = Math.PI / 2;
-        scene.add(circleMesh);
-        sceneObjectsRef.current.push(circleMesh);
-      });
+      if ((geometria.circulos || []).length > 0) {
+        const circleGeoms = [];
+        const matrix = new THREE.Matrix4();
+        (geometria.circulos || []).forEach((c) => {
+          const ringGeom = new THREE.RingGeometry(Math.max(0.001, c.raio - 0.02), c.raio, 16);
+          matrix.makeRotationX(Math.PI / 2);
+          matrix.setPosition(c.cx, 0.015, -c.cy);
+          ringGeom.applyMatrix4(matrix);
+          circleGeoms.push(ringGeom);
+          geometriesRef.current.push(ringGeom);
+        });
+        if (circleGeoms.length > 0) {
+          try {
+            const mergedCircles = mergeGeometries(circleGeoms, false);
+            geometriesRef.current.push(mergedCircles);
+            const circleMat = new THREE.MeshBasicMaterial({ color: 0x4b5563, side: THREE.DoubleSide });
+            trackedMaterials.push(circleMat);
+            const circleMesh = new THREE.Mesh(mergedCircles, circleMat);
+            scene.add(circleMesh);
+            sceneObjectsRef.current.push(circleMesh);
+          } catch (e) {
+            console.warn("Merge de círculos falhou:", e);
+          }
+        }
+      }
     }
 
     // ─── 7. Divisões (Rooms) — Merge Geometries ──────────────────────────────
-    const roomGeometriesToMerge = [];
-    const roomFloorGeometries = [];
     const roomWallGeometries = [];
+    const roomWallMat = new THREE.MeshStandardMaterial({
+      color: 0x94a3b8, roughness: 0.9, metalness: 0.0,
+      transparent: true, opacity: wallOpacity, side: THREE.DoubleSide,
+    });
+    trackedMaterials.push(roomWallMat);
 
     rooms.forEach((room) => {
       try {
@@ -625,11 +645,6 @@ export default function Canvas3D({
         geometriesRef.current.push(floorGeom);
 
         const esp = 0.12, altP = 2.8;
-        const wallMat = new THREE.MeshStandardMaterial({
-          color: 0x94a3b8, roughness: 0.9, metalness: 0.0,
-          transparent: true, opacity: wallOpacity, side: THREE.DoubleSide,
-        });
-        trackedMaterials.push(wallMat);
 
         // Criar geometrias de parede para merge posterior
         const wLeft = new THREE.BoxGeometry(esp, altP, rh);
@@ -670,7 +685,7 @@ export default function Canvas3D({
       try {
         const mergedWalls = mergeGeometries(roomWallGeometries, false);
         geometriesRef.current.push(mergedWalls);
-        const mergedWallMesh = new THREE.Mesh(mergedWalls, trackedMaterials[trackedMaterials.length - 1]);
+        const mergedWallMesh = new THREE.Mesh(mergedWalls, roomWallMat);
         mergedWallMesh.castShadow = true;
         mergedWallMesh.receiveShadow = true;
         scene.add(mergedWallMesh);
@@ -680,47 +695,176 @@ export default function Canvas3D({
       }
     }
 
-    // ─── 8. Componentes Elétricos — InstancedMesh + Iluminação Noite ──────────
-    const compGroups = new Map(); // groupKey -> { comps: [], geom: null, mat: null, cor: number }
+    // ─── 8. Componentes Elétricos — InstancedMesh + Iluminação Interativa ─────
+    const compGroups = new Map();
+    const switchMeshesRef = [];
+    const lampStateMapRef = { current: new Map() };
+
+    // Helper: extrair array de comandos do rótulo JSON, array ou string (ex: "a, b" ou ["a", "b"])
+    const getComponentComandosArray = (comp) => {
+      if (!comp || !comp.rotulo) return [];
+
+      let rawValue = null;
+
+      try {
+        const parsed = JSON.parse(comp.rotulo);
+        if (parsed && typeof parsed === "object") {
+          if (parsed.comando) {
+            if (typeof parsed.comando === "object" && parsed.comando.value != null) {
+              rawValue = parsed.comando.value;
+            } else {
+              rawValue = parsed.comando;
+            }
+          } else if (parsed.comandos) {
+            rawValue = parsed.comandos;
+          }
+        }
+      } catch {
+        rawValue = comp.rotulo;
+      }
+
+      if (!rawValue) rawValue = comp.rotulo;
+
+      if (Array.isArray(rawValue)) {
+        return rawValue.map((v) => String(v).trim().toLowerCase()).filter(Boolean);
+      }
+
+      if (typeof rawValue === "string") {
+        return rawValue
+          .split(",")
+          .map((v) => v.trim().toLowerCase())
+          .filter(Boolean);
+      }
+
+      return [String(rawValue).trim().toLowerCase()].filter(Boolean);
+    };
+
+    // Helper: determinar quais lâmpadas estão ligadas a um interruptor (ESTRITAMENTE por rótulos/comandos)
+    const getLinkedLamps = (switchComp) => {
+      const switchComandos = getComponentComandosArray(switchComp);
+      const linkedIds = new Set();
+
+      // Matched ESTRITAMENTE por Comando/Rótulo (ex: "a" ou ["a", "b"])
+      if (switchComandos.length > 0) {
+        componentes.forEach((c) => {
+          if (c.tipo.startsWith("lampada")) {
+            const lampComandos = getComponentComandosArray(c);
+            const hasMatch = switchComandos.some((sc) => lampComandos.includes(sc));
+            if (hasMatch) {
+              linkedIds.add(c.id);
+            }
+          }
+        });
+      }
+
+      return Array.from(linkedIds);
+    };
+
+    // Helper: extrair potência real da lâmpada (W) das propriedades do componente
+    const getComponentWatts = (comp) => {
+      if (comp.potencia_w != null) {
+        const val = Number(comp.potencia_w);
+        if (!isNaN(val) && val > 0) return val;
+      }
+      if (comp.rotulo) {
+        try {
+          const parsed = JSON.parse(comp.rotulo);
+          if (parsed && typeof parsed === "object") {
+            if (parsed.potencia_w != null) {
+              const val = Number(parsed.potencia_w);
+              if (!isNaN(val) && val > 0) return val;
+            }
+            if (parsed.potencia_va != null) {
+              const val = typeof parsed.potencia_va === "object" ? parsed.potencia_va.value : parsed.potencia_va;
+              const num = Number(val);
+              if (!isNaN(num) && num > 0) return num;
+            }
+          }
+        } catch {}
+      }
+      return 0;
+    };
+
+    // Helper para atualizar visual da lâmpada (ON/OFF)
+    const updateLamp3DState = (lampObjs) => {
+      const { pointLight, haloSprite, spotFloorMesh, lampMesh, baseWatts, isOn, hasPower } = lampObjs;
+
+      // Uma luz SÓ acende se tiver potência configurada (> 0 W) E o interruptor associado estiver LIGADO (isOn)
+      const shouldBeLit = hasPower && isOn;
+
+      if (shouldBeLit) {
+        const lightIntensity = Math.min(3.5, Math.max(1.2, 1.0 + baseWatts / 30));
+        if (pointLight) pointLight.intensity = lightIntensity;
+        if (haloSprite) haloSprite.material.opacity = 0.8;
+        if (spotFloorMesh) spotFloorMesh.material.opacity = 0.35;
+        if (lampMesh && lampMesh.material) {
+          lampMesh.material.color.setHex(0xfbbf24); // Amarelo aceso brilhante
+          lampMesh.material.emissive.setHex(0xfbbf24);
+          lampMesh.material.emissiveIntensity = isDia ? 0.4 : 2.0;
+        }
+      } else {
+        if (pointLight) pointLight.intensity = 0.0;
+        if (haloSprite) haloSprite.material.opacity = 0.0;
+        if (spotFloorMesh) spotFloorMesh.material.opacity = 0.0;
+        if (lampMesh && lampMesh.material) {
+          lampMesh.material.color.setHex(0x64748b); // Cinza desligado
+          lampMesh.material.emissive.setHex(0x000000);
+          lampMesh.material.emissiveIntensity = 0.0;
+        }
+      }
+    };
+
+    let shadowPointLightCount = 0;
 
     componentes.forEach((c) => {
       const { geom, cor, yFinal, extraMesh } = getComponentGeometry(c);
+      const watts = getComponentWatts(c);
+      const hasPower = watts > 0;
 
-      const watts = c.potencia_w || 0;
+      let lampPointLight = null;
+      let lampHaloSprite = null;
+      let lampFloorMesh = null;
 
-      // Simulação de iluminação real de lâmpadas acesas no modo noite apenas se tiverem potência definida (W > 0)
-      if (c.tipo.startsWith("lampada") && !isDia && watts > 0) {
-        // 1. A LUZ REAL (Omnidirecional 360º que ilumina todo o espaço e paredes da sala)
-        const lightIntensity = Math.min(3.5, Math.max(1.2, 1.0 + watts / 30));
-        const lightDistance = Math.max(5.0, 4.0 + Math.sqrt(watts) * 0.5);
+      // Criar fontes de luz para todas as lâmpadas
+      if (c.tipo.startsWith("lampada")) {
+        // 1. PointLight real (inicia com intensidade 0.0)
+        const lightDistance = Math.max(5.0, 4.0 + Math.sqrt(watts > 0 ? watts : 60) * 0.5);
 
-        const lampLight = new THREE.PointLight(0xffedd5, lightIntensity, lightDistance, 1.5);
-        lampLight.position.set(c.x, yFinal - 0.1, -c.y);
-        lampLight.castShadow = true;
-        lampLight.shadow.mapSize.width = 512;
-        lampLight.shadow.mapSize.height = 512;
-        lampLight.shadow.bias = -0.002;
-        lampLight.shadow.radius = 4;
-        scene.add(lampLight);
-        sceneObjectsRef.current.push(lampLight);
+        lampPointLight = new THREE.PointLight(0xffedd5, 0.0, lightDistance, 1.5);
+        lampPointLight.position.set(c.x, yFinal - 0.1, -c.y);
 
-        // 2. HALO DE BRILHO NA PRÓPRIA LÂMPADA (Glare/Flare realista)
+        // Limitar PointLights com sombra a 2 no máximo para não estourar os limites de textura da GPU (MAX_TEXTURE_IMAGE_UNITS)
+        if (shadowPointLightCount < 2) {
+          lampPointLight.castShadow = true;
+          lampPointLight.shadow.mapSize.width = 512;
+          lampPointLight.shadow.mapSize.height = 512;
+          lampPointLight.shadow.bias = -0.002;
+          lampPointLight.shadow.radius = 4;
+          shadowPointLightCount++;
+        } else {
+          lampPointLight.castShadow = false;
+        }
+
+        scene.add(lampPointLight);
+        sceneObjectsRef.current.push(lampPointLight);
+
+        // 2. Halo de Brilho
         const haloMat = new THREE.SpriteMaterial({
           map: getGlowTexture(),
           color: 0xfffde6,
           transparent: true,
-          opacity: 0.8,
+          opacity: 0.0, // Inicia desligado (opacidade 0)
           blending: THREE.AdditiveBlending,
           depthWrite: false,
         });
-        const haloSprite = new THREE.Sprite(haloMat);
+        lampHaloSprite = new THREE.Sprite(haloMat);
         const haloScale = Math.min(1.2, Math.max(0.4, 0.4 + (watts / 100) * 0.5));
-        haloSprite.scale.set(haloScale, haloScale, 1.0);
-        haloSprite.position.set(c.x, yFinal - 0.05, -c.y);
-        scene.add(haloSprite);
-        sceneObjectsRef.current.push(haloSprite);
+        lampHaloSprite.scale.set(haloScale, haloScale, 1.0);
+        lampHaloSprite.position.set(c.x, yFinal - 0.05, -c.y);
+        scene.add(lampHaloSprite);
+        sceneObjectsRef.current.push(lampHaloSprite);
 
-        // 3. FAKE GLOW NO CHÃO (Projeção radial desfocada subtil)
+        // 3. Fake Glow no Chão
         const floorGlowRadius = Math.min(2.5, Math.max(0.8, 0.8 + (watts / 100) * 0.9));
         const spotPlaneGeom = new THREE.PlaneGeometry(floorGlowRadius * 2.5, floorGlowRadius * 2.5);
         geometriesRef.current.push(spotPlaneGeom);
@@ -729,22 +873,25 @@ export default function Canvas3D({
           color: 0xfef08a,
           map: getGlowTexture(),
           transparent: true,
-          opacity: 0.35,
+          opacity: 0.0, // Inicia desligado (opacidade 0)
           depthWrite: false,
           side: THREE.DoubleSide,
           blending: THREE.AdditiveBlending,
         });
         trackedMaterials.push(spotFloorMat);
 
-        const spotFloorMesh = new THREE.Mesh(spotPlaneGeom, spotFloorMat);
-        spotFloorMesh.position.set(c.x, 0.01, -c.y);
-        spotFloorMesh.rotation.x = -Math.PI / 2;
-        scene.add(spotFloorMesh);
-        sceneObjectsRef.current.push(spotFloorMesh);
+        lampFloorMesh = new THREE.Mesh(spotPlaneGeom, spotFloorMat);
+        lampFloorMesh.position.set(c.x, 0.01, -c.y);
+        lampFloorMesh.rotation.x = -Math.PI / 2;
+        scene.add(lampFloorMesh);
+        sceneObjectsRef.current.push(lampFloorMesh);
       }
 
       if (geom) {
-        const key = getGeometryGroupKey(geom, cor);
+        // Lâmpadas e Interruptores são renderizados como meshes individuais para controlo dinâmico de iluminação e clique
+        const isInteractiveComp = c.tipo.startsWith("interruptor") || c.tipo.startsWith("lampada");
+        const key = isInteractiveComp ? null : getGeometryGroupKey(geom, cor);
+
         if (key) {
           if (!compGroups.has(key)) {
             compGroups.set(key, { comps: [], geom: geom.clone(), cor });
@@ -752,18 +899,39 @@ export default function Canvas3D({
           compGroups.get(key).comps.push({ ...c, yFinal, geomKey: key, extraMesh });
         } else {
           const rotRad = ((c.rotacao || 0) * Math.PI) / 180;
-          const emissiveInt = watts > 0 ? (isDia ? 0.2 : 2.0) : 0.0;
+          const isLamp = c.tipo.startsWith("lampada");
+          const initialColor = isLamp ? 0x64748b : cor; // Lâmpadas iniciam com cor cinza (desligadas)
           const mat = new THREE.MeshStandardMaterial({
-            color: cor, roughness: 0.3, metalness: 0.2,
-            emissive: cor, emissiveIntensity: c.tipo.startsWith("lampada") ? emissiveInt : 0.0,
+            color: initialColor, roughness: 0.3, metalness: 0.2,
+            emissive: isLamp ? 0x000000 : cor, emissiveIntensity: 0.0, // Inicia sem emissão
           });
+          trackedMaterials.push(mat);
+
           const { posX, posY, posZ } = getComponentPosition3D(c, yFinal);
           const mesh = new THREE.Mesh(geom, mat);
           mesh.position.set(posX, posY, posZ);
           mesh.rotation.y = -rotRad;
           if (c.tipo === "camera") mesh.rotation.x = Math.PI / 6;
+
+          if (c.tipo.startsWith("interruptor")) {
+            mesh.userData = { isSwitch: true, component: c };
+            switchMeshesRef.push(mesh);
+          }
+
           scene.add(mesh);
           sceneObjectsRef.current.push(mesh);
+
+          if (isLamp) {
+            lampStateMapRef.current.set(c.id, {
+              pointLight: lampPointLight,
+              haloSprite: lampHaloSprite,
+              spotFloorMesh: lampFloorMesh,
+              lampMesh: mesh,
+              baseWatts: watts,
+              hasPower,
+              isOn: false, // Inicia desligada
+            });
+          }
 
           if (extraMesh) {
             extraMesh.position.set(posX, posY, posZ);
@@ -775,13 +943,18 @@ export default function Canvas3D({
       }
     });
 
+    // Atualizar estado inicial de todas as lâmpadas (desligadas por padrão)
+    lampStateMapRef.current.forEach((lampObjs) => {
+      updateLamp3DState(lampObjs);
+    });
+
     // Renderizar cada grupo como InstancedMesh
     compGroups.forEach((group) => {
       const { comps, geom: groupGeom, cor } = group;
       if (comps.length === 0) return;
 
       const hasPoweredLamps = comps.some((c) => (c.potencia_w || 0) > 0);
-      const emissiveInt = hasPoweredLamps ? (isDia ? 0.2 : 2.0) : 0.0;
+      const emissiveInt = hasPoweredLamps ? (isDia ? 0.3 : 2.0) : 0.0;
       const mat = new THREE.MeshStandardMaterial({
         color: cor, roughness: 0.3, metalness: 0.2,
         emissive: cor, emissiveIntensity: cor === 0xf59e0b ? emissiveInt : 0.0,
@@ -817,6 +990,86 @@ export default function Canvas3D({
       sceneObjectsRef.current.push(instanced);
     });
 
+    // ─── Raycaster para cliques interativos nos interruptores ─────────────
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let mouseDownPos = { x: 0, y: 0 };
+
+    const domElem = renderer.domElement;
+
+    const handlePointerDown = (e) => {
+      mouseDownPos = { x: e.clientX, y: e.clientY };
+    };
+
+    const handlePointerUp = (e) => {
+      const dist = Math.hypot(e.clientX - mouseDownPos.x, e.clientY - mouseDownPos.y);
+      if (dist > 5) return; // Se arrastou a câmara, ignora o clique
+
+      const rect = domElem.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(switchMeshesRef, true);
+
+      if (intersects.length > 0) {
+        let hit = intersects[0].object;
+        while (hit && !hit.userData?.isSwitch && hit.parent) {
+          hit = hit.parent;
+        }
+        if (hit && hit.userData?.isSwitch) {
+          const switchComp = hit.userData.component;
+          const linkedLampIds = getLinkedLamps(switchComp);
+
+          if (linkedLampIds.length > 0) {
+            const firstState = lampStateMapRef.current.get(linkedLampIds[0]);
+            const newIsOn = !(firstState?.isOn ?? true);
+
+            linkedLampIds.forEach((lampId) => {
+              const lampObjs = lampStateMapRef.current.get(lampId);
+              if (lampObjs) {
+                lampObjs.isOn = newIsOn;
+                updateLamp3DState(lampObjs);
+              }
+            });
+
+            // Animação/Flash no interruptor ao clicar
+            if (hit.material) {
+              const origColor = hit.material.color.getHex();
+              hit.material.color.setHex(newIsOn ? 0x4ade80 : 0x166534);
+              setTimeout(() => {
+                if (hit.material) hit.material.color.setHex(origColor);
+                requestRender();
+              }, 250);
+            }
+
+            requestRender();
+          }
+        }
+      }
+    };
+
+    let lastMoveTime = 0;
+    const handlePointerMove = (e) => {
+      if (switchMeshesRef.length === 0) return;
+      if (e.buttons > 0) return; // Ignorar raycast enquanto se arrasta a câmara
+      const now = performance.now();
+      if (now - lastMoveTime < 60) return; // Throttle para ~16 FPS no hover
+      lastMoveTime = now;
+
+      const rect = domElem.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(switchMeshesRef, true);
+      domElem.style.cursor = intersects.length > 0 ? "pointer" : "default";
+    };
+
+    domElem.addEventListener("pointerdown", handlePointerDown);
+    domElem.addEventListener("pointerup", handlePointerUp);
+    domElem.addEventListener("pointermove", handlePointerMove);
+
     // ─── 9. Conexões com cor por circuito e rotas realistas ─────────────────
     const circuitColors = {};
     const palette = [0x6366f1, 0x22c55e, 0xf59e0b, 0xef4444, 0xec4899, 0x14b8a6, 0x8b5cf6, 0x3b82f6];
@@ -825,12 +1078,30 @@ export default function Canvas3D({
     });
 
     const conduitRadius = 0.018; // raio do tubo conduto (~36mm diâmetro real)
-    const conduitSegments = 8;   // segmentos radiais
+    const conduitTubularSegments = 12; // otimizado de 32 -> 12
+    const conduitRadialSegments = 5;   // otimizado de 8 -> 5
     conduitMeshesRef.current = [];
 
+    // Map para lookup O(1) de componentes
+    const compMap = new Map((componentes || []).map((c) => [c.id, c]));
+
+    // Material compartilhado para tubos exteriores PVC
+    const sharedTubeMat = new THREE.MeshStandardMaterial({
+      color: 0x9ca3af,       // cinza PVC
+      roughness: 0.65,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.92,
+      depthTest: true,
+    });
+    trackedMaterials.push(sharedTubeMat);
+
+    // Cache de materiais de fio interior por cor/circuito
+    const wireMatCache = new Map();
+
     conexoes.forEach((conn) => {
-      const orig = componentes.find((c) => c.id === conn.origem_id);
-      const dest = componentes.find((c) => c.id === conn.destino_id);
+      const orig = compMap.get(conn.origem_id);
+      const dest = compMap.get(conn.destino_id);
       if (!orig || !dest) return;
 
       const corCircuito = orig.circuit_id ? (circuitColors[orig.circuit_id] || 0x8b5cf6) : 0x8b5cf6;
@@ -893,40 +1164,35 @@ export default function Canvas3D({
       }
 
       // Tubo cilíndrico realista (estilo eletroduto PVC corrugado)
-      const tubeGeom = new THREE.TubeGeometry(pathCurve, 32, conduitRadius, conduitSegments, false);
+      const tubeGeom = new THREE.TubeGeometry(pathCurve, conduitTubularSegments, conduitRadius, conduitRadialSegments, false);
       geometriesRef.current.push(tubeGeom);
 
-      const tubeMat = new THREE.MeshStandardMaterial({
-        color: 0x9ca3af,       // cinza PVC
-        roughness: 0.65,
-        metalness: 0.05,
-        transparent: true,
-        opacity: 0.92,
-        depthTest: true,
-      });
-
-      const tubeMesh = new THREE.Mesh(tubeGeom, tubeMat);
+      const tubeMesh = new THREE.Mesh(tubeGeom, sharedTubeMat);
       tubeMesh.renderOrder = 10; // renderizar depois das paredes
       scene.add(tubeMesh);
       sceneObjectsRef.current.push(tubeMesh);
       conduitMeshesRef.current.push(tubeMesh);
 
       // Fio interior colorido pelo circuito (mais fino, dentro do tubo)
-      const wireGeom = new THREE.TubeGeometry(pathCurve, 32, conduitRadius * 0.35, 6, false);
+      const wireGeom = new THREE.TubeGeometry(pathCurve, conduitTubularSegments, conduitRadius * 0.35, 4, false);
       geometriesRef.current.push(wireGeom);
 
-      const wireMat = new THREE.MeshStandardMaterial({
-        color: corCircuito,
-        roughness: 0.4,
-        metalness: 0.1,
-        emissive: corCircuito,
-        emissiveIntensity: 0.3,
-        transparent: true,
-        opacity: 0.92,
-        depthTest: true,
-      });
+      if (!wireMatCache.has(corCircuito)) {
+        const wireMat = new THREE.MeshStandardMaterial({
+          color: corCircuito,
+          roughness: 0.4,
+          metalness: 0.1,
+          emissive: corCircuito,
+          emissiveIntensity: 0.3,
+          transparent: true,
+          opacity: 0.92,
+          depthTest: true,
+        });
+        wireMatCache.set(corCircuito, wireMat);
+        trackedMaterials.push(wireMat);
+      }
 
-      const wireMesh = new THREE.Mesh(wireGeom, wireMat);
+      const wireMesh = new THREE.Mesh(wireGeom, wireMatCache.get(corCircuito));
       wireMesh.renderOrder = 11;
       scene.add(wireMesh);
       sceneObjectsRef.current.push(wireMesh);
@@ -962,6 +1228,9 @@ export default function Canvas3D({
         animFrameIdRef.current = null;
       }
       window.removeEventListener("resize", handleResize);
+      domElem.removeEventListener("pointerdown", handlePointerDown);
+      domElem.removeEventListener("pointerup", handlePointerUp);
+      domElem.removeEventListener("pointermove", handlePointerMove);
 
       // Dispose de todos os objetos na cena
       sceneObjectsRef.current.forEach(disposeObject);

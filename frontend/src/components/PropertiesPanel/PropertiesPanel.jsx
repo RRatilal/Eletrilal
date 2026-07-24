@@ -562,14 +562,13 @@ export default function PropertiesPanel({
             ) : componente.tipo.startsWith("lampada") ? (
               <>
                 <label>
-                  <span className="field-label">Interruptor</span>
+                  <span className="field-label">Interruptor(es)</span>
                   <input
                     type="text"
-                    maxLength={1}
-                    defaultValue={componente.rotulo?.length === 1 ? componente.rotulo : "a"}
-                    placeholder="a"
+                    defaultValue={componente.rotulo || "a"}
+                    placeholder="Ex: a, b"
                     onBlur={(e) => {
-                      const val = e.target.value.slice(0, 1) || "a";
+                      const val = e.target.value.trim() || "a";
                       handleRotulo(componente.id, val);
                     }}
                     disabled={loading["rotulo"]}

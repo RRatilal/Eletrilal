@@ -18,6 +18,7 @@ export default function Canvas({
   conexoes,
   rooms = [],
   modoCabo,
+  plantaTravada = false,
   onComponenteCriado,
   onComponenteAtualizado,
   onComponenteApagado,
@@ -261,7 +262,14 @@ export default function Canvas({
     if (geoResult?.modo === "agrupado" && geoResult.totalObjetos > 0) {
       toast.info(`Planta com ${geoResult.totalObjetos.toLocaleString()} linhas — modo agrupado (sem seleção individual de linhas)`);
     }
-    
+    if (plantaTravada && floorPlanGroupRef?.current) {
+      floorPlanGroupRef.current.set({
+        selectable: false,
+        evented: false,
+        hoverCursor: "default",
+      });
+    }
+
     // 2. Desenhar as divisões (rooms)
     rooms.forEach((r) => {
       desenharRoom(r, { onModified: handleRoomModified });
@@ -282,6 +290,22 @@ export default function Canvas({
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pronto, geometria, rooms]);
+
+  // ─── Sincronizar travamento da planta (lock/unlock) ───
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    const grupo = floorPlanGroupRef?.current;
+    if (!pronto || !canvas || !grupo) return;
+    grupo.set({
+      selectable: !plantaTravada,
+      evented: !plantaTravada,
+      hoverCursor: plantaTravada ? "default" : "pointer",
+    });
+    if (plantaTravada) {
+      canvas.discardActiveObject();
+    }
+    canvas.requestRenderAll();
+  }, [plantaTravada, pronto, fabricCanvasRef, floorPlanGroupRef]);
 
   // ─── Aplicar posição guardada da planta + floor plan modifications após geometria carregar ───
   useEffect(() => {
@@ -366,21 +390,36 @@ export default function Canvas({
     canvas.selection = false;
 
     function handleClick(opt) {
-      // getPointer já devolve coordenadas no espaço do canvas (world-space).
-      // NÃO aplicar zoom/vpt novamente — isso duplicaria a transformação!
       const pointer = canvas.getPointer(opt.e);
-      const compId = encontrarComponenteEm({ x: pointer.x, y: pointer.y });
+      const compId = encontrarComponenteEm({ x: pointer.x, y: pointer.y }, opt.target);
       if (!compId) return;
 
       if (!caboOrigem) {
         setCaboOrigem(compId);
         onCaboOrigemSelecionada?.(compId);
+
+        // Destacar visualmente o componente de origem selecionado
+        const targetObj = canvas.getObjects().find((o) => o.data?.componentId === compId);
+        if (targetObj) {
+          targetObj._origStroke = targetObj.stroke;
+          targetObj.set({ stroke: "#22c55e", strokeWidth: 3 });
+          canvas.requestRenderAll();
+        }
+
         toast.info("Clique no componente de destino para criar o cabo");
       } else {
         if (compId === caboOrigem) {
           toast.warning("Clique num componente diferente");
           return;
         }
+
+        // Remover destaque do 1º componente
+        const origObj = canvas.getObjects().find((o) => o.data?.componentId === caboOrigem);
+        if (origObj) {
+          origObj.set({ stroke: origObj._origStroke || null, strokeWidth: 1 });
+          delete origObj._origStroke;
+        }
+
         criarConexao(caboOrigem, compId);
         setCaboOrigem(null);
         onCaboOrigemSelecionada?.(null);
@@ -391,8 +430,22 @@ export default function Canvas({
 
     return () => {
       canvas.off("mouse:down", handleClick);
-      canvas.setCursor("default");
-      canvas.selection = true;
+      if (canvas.upperCanvasEl) {
+        canvas.setCursor("default");
+        canvas.selection = true;
+      }
+
+      // Limpar destaques visuais de origem se o modo for interrompido
+      if (caboOrigem) {
+        const origObj = canvas.getObjects().find((o) => o.data?.componentId === caboOrigem);
+        if (origObj) {
+          origObj.set({ stroke: origObj._origStroke || null, strokeWidth: 1 });
+          delete origObj._origStroke;
+          if (canvas.upperCanvasEl) {
+            canvas.requestRenderAll();
+          }
+        }
+      }
     };
   }, [pronto, modoCabo, caboOrigem]);
 
@@ -563,6 +616,16 @@ export default function Canvas({
   }
 
   async function criarConexao(origemId, destinoId) {
+    const jaExiste = (conexoes || []).some(
+      (c) =>
+        (c.origem_id === origemId && c.destino_id === destinoId) ||
+        (c.origem_id === destinoId && c.destino_id === origemId)
+    );
+    if (jaExiste) {
+      toast.warning("Já existe uma conexão entre estes dois componentes.");
+      return;
+    }
+
     try {
       const novaConexao = await api.criarConexao(projectId, {
         origem_id: origemId,
