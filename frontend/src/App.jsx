@@ -54,6 +54,7 @@ function AppContent() {
       });
     }
     setCanvasRefs({
+      exportarPNG: payload.exportarPNG,
       toggleFloorPlanLock: payload.toggleFloorPlanLock,
       geometriaRef: payload.geometriaRef,
       floorPlanGroupRef: payload.floorPlanGroupRef,
@@ -62,6 +63,32 @@ function AppContent() {
       floorPlanModeRef: payload.floorPlanModeRef,
     });
   }, []);
+
+  // ─── Exportar Planta 2D em PNG (alta resolução 2x + enquadramento completo) ───
+  const exportarCanvasPNG = useCallback(() => {
+    if (canvasRefs?.exportarPNG) {
+      toast.info("A gerar imagem PNG de alta resolução...");
+      canvasRefs.exportarPNG();
+      toast.success("Imagem PNG exportada com sucesso!");
+    } else if (canvasInstance) {
+      try {
+        const dataURL = canvasInstance.toDataURL({
+          format: "png",
+          quality: 1,
+          multiplier: 2,
+        });
+        const link = document.createElement("a");
+        link.href = dataURL;
+        link.download = `electrilal_planta_${Date.now()}.png`;
+        link.click();
+        toast.success("Imagem PNG exportada!");
+      } catch (err) {
+        toast.error(`Erro ao exportar PNG: ${err.message}`);
+      }
+    } else {
+      toast.warning("Canvas 2D não disponível.");
+    }
+  }, [canvasRefs, canvasInstance, toast]);
 
   // ─── Canvas Integration (Sidebar ↔ Fabric.js two-way binding) ───
   const {
@@ -447,6 +474,7 @@ function AppContent() {
         }}
         gridVisivel={gridVisivel}
         onToggleGrid={() => setGridVisivel((v) => !v)}
+        onExportarPNG={exportarCanvasPNG}
       />
 
       {!modo3D && (

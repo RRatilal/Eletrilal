@@ -27,6 +27,7 @@ export default function Toolbar({
   onToggleModo3D,
   gridVisivel,
   onToggleGrid,
+  onExportarPNG,
 }) {
   const inputRef = useRef(null);
   const toast = useToast();
@@ -150,8 +151,18 @@ export default function Toolbar({
           className="toolbar-btn"
           onClick={handleExportar}
           disabled={!projeto}
+          title="Exportar projeto em formato DXF"
         >
           💾 Exportar DXF
+        </button>
+
+        <button
+          className="toolbar-btn"
+          onClick={onExportarPNG}
+          disabled={!projeto || modo3D}
+          title="Exportar imagem da planta em alta resolução (PNG)"
+        >
+          🖼️ Exportar PNG
         </button>
       </div>
 

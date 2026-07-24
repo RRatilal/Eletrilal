@@ -42,7 +42,7 @@ export default function Canvas({
     fabricCanvasRef, pronto,
     desenharGeometria, desenharComponente,
     desenharConexao, desenharRoom, atualizarConexoes, encontrarComponenteEm,
-    limpar, setGridVisible, toggleFloorPlanLock,
+    limpar, setGridVisible, toggleFloorPlanLock, exportarPNG,
     geometriaRef, floorPlanGroupRef, floorPlanScaleRef,
     floorPlanClipRectRef, floorPlanModeRef,
   } = useFabricCanvas(canvasElRef, containerRef);
@@ -56,6 +56,7 @@ export default function Canvas({
     if (pronto && fabricCanvasRef.current && onCanvasRef) {
       onCanvasRef({
         canvas: fabricCanvasRef.current,
+        exportarPNG,
         toggleFloorPlanLock,
         geometriaRef,
         floorPlanGroupRef,
@@ -64,7 +65,7 @@ export default function Canvas({
         floorPlanModeRef,
       });
     }
-  }, [pronto, fabricCanvasRef, geometriaRef, floorPlanGroupRef,
+  }, [pronto, fabricCanvasRef, exportarPNG, geometriaRef, floorPlanGroupRef,
       floorPlanScaleRef, floorPlanClipRectRef, floorPlanModeRef, onCanvasRef]);
 
   // ─── Alça Interativa de Edição de Curva (Condutos) ───

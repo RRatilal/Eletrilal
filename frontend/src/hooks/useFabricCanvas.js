@@ -1848,6 +1848,106 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     return !locked; // retorna o novo estado: true = locked
   }, []);
 
+  /** Exporta a planta 2D em PNG de alta resolução com auto-enquadramento e DXF completo */
+  /** Exporta a planta 2D em PNG de alta resolução com auto-enquadramento e DXF completo */
+  const exportarPNG = useCallback((opcoes = {}) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const { multiplicador = 3, incluirGrelha = false } = opcoes;
+
+    // 1. Guardar todo o estado que vamos alterar temporariamente
+    const originalVpt = canvas.viewportTransform.slice();
+    const originalWidth = canvas.getWidth();
+    const originalHeight = canvas.getHeight();
+    const activeObject = canvas.getActiveObject();
+    const grelhaEstadoOriginal = gridVisibleRef.current;
+    canvas.discardActiveObject();
+
+    // 2. Calcular bounding box real do conteúdo (objetos Fabric + planta nativa)
+    const objects = canvas.getObjects();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    objects.forEach((obj) => {
+      const b = obj.getBoundingRect(true, true);
+      if (b.width > 0 && b.height > 0) {
+        minX = Math.min(minX, b.left);
+        minY = Math.min(minY, b.top);
+        maxX = Math.max(maxX, b.left + b.width);
+        maxY = Math.max(maxY, b.top + b.height);
+      }
+    });
+
+    // Em modo "agrupado" a planta é o invisRect, que já está em canvas.getObjects()
+    // (por isso já entra no forEach acima). Isto é só uma salvaguarda extra,
+    // caso floorPlanGroupRef alguma vez aponte para um objeto fora do canvas.
+    const floorPlanGroup = floorPlanGroupRef.current;
+    if (floorPlanGroup && !objects.includes(floorPlanGroup)) {
+      const b = floorPlanGroup.getBoundingRect(true, true);
+      minX = Math.min(minX, b.left);
+      minY = Math.min(minY, b.top);
+      maxX = Math.max(maxX, b.left + b.width);
+      maxY = Math.max(maxY, b.top + b.height);
+    }
+
+    if (minX === Infinity || maxX === -Infinity) {
+      minX = 0; minY = 0; maxX = originalWidth; maxY = originalHeight;
+    }
+
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+    const margin = 40;
+
+    // 3. Resolução final de exportação — redimensiona o CANVAS REAL.
+    //    Como drawDynamicGrid/drawDxfGeometry leem sempre canvas.getWidth(),
+    //    canvas.getZoom() e canvas.viewportTransform em tempo real (nada
+    //    está hardcoded), ao redimensionar o canvas ambos — os objetos
+    //    Fabric.js E a planta nativa — são desenhados diretamente nesta
+    //    resolução, sem nenhum upscaling posterior.
+    const exportW = originalWidth * multiplicador;
+    const exportH = originalHeight * multiplicador;
+    const marginExport = margin * multiplicador;
+
+    const scaleX = (exportW - marginExport * 2) / Math.max(contentWidth, 1);
+    const scaleY = (exportH - marginExport * 2) / Math.max(contentHeight, 1);
+    const scale = Math.min(scaleX, scaleY, 5 * multiplicador);
+
+    const vptX = (exportW - contentWidth * scale) / 2 - minX * scale;
+    const vptY = (exportH - contentHeight * scale) / 2 - minY * scale;
+
+    if (!incluirGrelha) gridVisibleRef.current = false;
+
+    canvas.setDimensions({ width: exportW, height: exportH });
+    canvas.setViewportTransform([scale, 0, 0, scale, vptX, vptY]);
+
+    // 4. Renderizar os objetos Fabric.js (componentes, conexões, rooms, etc.)
+    canvas.renderAll();
+
+    // 5. Forçar EXPLICITAMENTE o desenho da planta nativa (paredes) e grelha,
+    //    em vez de confiar só no evento 'after:render'. Isto garante execução
+    //    síncrona, na ordem certa, ANTES de capturarmos a imagem — resolve o
+    //    problema das paredes a desaparecer na exportação.
+    drawDynamicGrid(canvas);
+    drawDxfGeometry(canvas);
+
+    // 6. Capturar diretamente do Fabric.js — já desenhado na resolução final,
+    //    nítido, sem precisar de redimensionar/esticar depois.
+    const dataURL = canvas.toDataURL({ format: "png", quality: 1 });
+
+    // 7. Restaurar tudo ao estado original do utilizador
+    canvas.setDimensions({ width: originalWidth, height: originalHeight });
+    canvas.setViewportTransform(originalVpt);
+    gridVisibleRef.current = grelhaEstadoOriginal;
+    if (activeObject) canvas.setActiveObject(activeObject);
+    canvas.renderAll();
+
+    // 8. Download
+    const link = document.createElement("a");
+    link.href = dataURL;
+    link.download = `electrilal_planta_${Date.now()}.png`;
+    link.click();
+  }, []);
+
   return {
     fabricCanvasRef,
     pronto,
@@ -1860,6 +1960,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     limpar,
     setGridVisible,
     toggleFloorPlanLock,
+    exportarPNG,
     // Floor plan editing refs (for useFloorPlanTools)
     geometriaRef,
     floorPlanGroupRef,
