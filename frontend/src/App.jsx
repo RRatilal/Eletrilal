@@ -55,6 +55,7 @@ function AppContent() {
     }
     setCanvasRefs({
       exportarPNG: payload.exportarPNG,
+      exportarSVG: payload.exportarSVG,
       toggleFloorPlanLock: payload.toggleFloorPlanLock,
       geometriaRef: payload.geometriaRef,
       floorPlanGroupRef: payload.floorPlanGroupRef,
@@ -84,6 +85,31 @@ function AppContent() {
         toast.success("Imagem PNG exportada!");
       } catch (err) {
         toast.error(`Erro ao exportar PNG: ${err.message}`);
+      }
+    } else {
+      toast.warning("Canvas 2D não disponível.");
+    }
+  }, [canvasRefs, canvasInstance, toast]);
+
+  const exportarCanvasSVG = useCallback(() => {
+    if (canvasRefs?.exportarSVG) {
+      toast.info("A gerar imagem SVG...");
+      canvasRefs.exportarSVG();
+      toast.success("Imagem SVG exportada com sucesso!");
+    } else if (canvasInstance) {
+      try {
+        const dataURL = canvasInstance.toDataURL({
+          format: "svg",
+          quality: 1,
+          multiplier: 2,
+        });
+        const link = document.createElement("a");
+        link.href = dataURL;
+        link.download = `electrilal_planta_${Date.now()}.svg`;
+        link.click();
+        toast.success("Imagem SVG exportada!");
+      } catch (err) {
+        toast.error(`Erro ao exportar SVG: ${err.message}`);
       }
     } else {
       toast.warning("Canvas 2D não disponível.");
@@ -285,7 +311,7 @@ function AppContent() {
     setConexoes([]);
     setRooms([]);
     setModoCabo(false);
-    api.listarProjetos().then(setProjetos).catch(() => {});
+    api.listarProjetos().then(setProjetos).catch(() => { });
   }
 
   function handleComponenteCriado(novo) {
@@ -474,7 +500,7 @@ function AppContent() {
         }}
         gridVisivel={gridVisivel}
         onToggleGrid={() => setGridVisivel((v) => !v)}
-        onExportarPNG={exportarCanvasPNG}
+        onExportarPNG={exportarCanvasSVG}
       />
 
       {!modo3D && (

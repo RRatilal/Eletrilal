@@ -10,18 +10,22 @@ from typing import List, Literal
 # Copper conductivity at 70°C (m/(Ω·mm²))
 COPPER_CONDUCTIVITY = 56.0
 
-# Iz table (Method B1 — IEC 60364 / NBR 5410)
-# Copper PVC 70°C, 2 loaded conductors, embedded conduit in wall
+# Iz table (Método de Referência B1/B2 — RTIEBT, conduta embebida em alvenaria)
+# Cobre, isolamento PVC (70°C), 3 condutores carregados, 30°C ambiente.
+# Valores confirmados contra fonte técnica RTIEBT (não a tabela IEC/NBR genérica anterior).
 # Format: (section_mm2, capacity_A)
 TABLE_IZ_IEC = [
-    (1.5, 14.5),
-    (2.5, 19.5),
-    (4.0, 26.0),
-    (6.0, 34.0),
-    (10.0, 46.0),
-    (16.0, 61.0),
-    (25.0, 80.0),
-    (35.0, 99.0),
+    (1.5, 15.5),
+    (2.5, 21.0),
+    (4.0, 28.0),
+    (6.0, 36.0),
+    (10.0, 50.0),
+    (16.0, 68.0),
+    (25.0, 89.0),
+    (35.0, 110.0),
+    (50.0, 134.0),
+    (70.0, 171.0),
+    (95.0, 207.0),
 ]
 
 # IEC 60898 standard breaker ratings (A)
@@ -33,6 +37,10 @@ MIN_SECTION = {
     "sockets": 2.5,
     "specific": 2.5,  # NBR 5410 requires 2.5 mm² for general power circuits
 }
+
+# Fator de segurança recomendado pelo RTIEBT, aplicado à corrente de
+# projeto (Ib) antes de escolher o disjuntor.
+SAFETY_FACTOR_RTIEBT = 1.25
 
 
 # ─── Supported types ────────────────────────────────────────────────────────
@@ -127,15 +135,15 @@ def calculateCircuit(
     cos_phi: float = 0.95,
 ) -> CircuitResult:
     """
-    Size an electrical circuit per IEC 60364 / NBR 5410.
+    Size an electrical circuit per IEC 60364 / NBR 5410 / RTIEBT.
 
     Steps:
         A. Ib = P / V (design current)
         B. Minimum normative section by circuit type
-        C. Choose commercial breaker >= Ib (In)
-        D. Cable capacity Iz (Method B1)
+        C. Choose commercial breaker >= Ib * SAFETY_FACTOR_RTIEBT (In)
+        D. Cable capacity Iz (Method B1/B2 RTIEBT)
         E. Effective Iz = Iz × FCA × FCT > In
-        F. Voltage drop: (2·L·I·cosφ) / (56·S) ≤ 4%
+        F. Voltage drop: (2·L·I·cosφ) / (56·S) ≤ 3% (lighting) or 5% (other)
     """
     warnings: List[str] = []
 
@@ -155,7 +163,7 @@ def calculateCircuit(
     min_section = MIN_SECTION.get(circuitType, 1.5)
 
     # ─── Step C: Breaker (In) ──────────────────────────────────────────────
-    In = choose_breaker_iec(Ib)
+    In = choose_breaker_iec(Ib * SAFETY_FACTOR_RTIEBT)
 
     # Warn if the design current exceeds the largest available breaker (63 A)
     max_breaker = float(BREAKERS_IEC_60898[-1])
@@ -207,8 +215,11 @@ def calculateCircuit(
         cos_phi=cos_phi,
     )
 
-    # Increase section iteratively if voltage drop > 4%
-    while voltage_drop > 4.0:
+    # RTIEBT: queda de tensão máxima admissível — 3% para iluminação,
+    # 5% para os restantes usos (tomadas, circuitos dedicados).
+    max_voltage_drop_pct = 3.0 if circuitType == "lighting" else 5.0
+
+    while voltage_drop > max_voltage_drop_pct:
         current_idx = None
         for j, (section, _) in enumerate(TABLE_IZ_IEC):
             if abs(section - chosen_section) < 0.01:
@@ -226,7 +237,7 @@ def calculateCircuit(
         else:
             warnings.append(
                 f"Even with the largest section ({chosen_section} mm²), "
-                f"voltage drop ({voltage_drop:.2f}%) exceeds 4%. "
+                f"voltage drop ({voltage_drop:.2f}%) exceeds {max_voltage_drop_pct}%. "
                 "Consider moving the panel closer or splitting the circuit."
             )
             break

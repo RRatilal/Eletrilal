@@ -1852,7 +1852,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const { multiplicador = 3, incluirGrelha = false } = opcoes;
+    const { multiplicador = 8, incluirGrelha = false } = opcoes;
 
     const originalVpt = canvas.viewportTransform.slice();
     const originalWidth = canvas.getWidth();
@@ -1930,6 +1930,87 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     link.click();
   }, []);
 
+  /** Exporta a planta como SVG vetorial — nítido a qualquer nível de zoom. */
+  const exportarSVG = useCallback(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    // 1. Bounding box do conteúdo (mesma lógica do exportarPNG)
+    const objects = canvas.getObjects();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    objects.forEach((obj) => {
+      const b = obj.getBoundingRect(true, true);
+      if (b.width > 0 && b.height > 0) {
+        minX = Math.min(minX, b.left);
+        minY = Math.min(minY, b.top);
+        maxX = Math.max(maxX, b.left + b.width);
+        maxY = Math.max(maxY, b.top + b.height);
+      }
+    });
+
+    const data = geometriaRef.current;
+    if (data) {
+      const acumular = (x, y) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      };
+      data.linhas.forEach((l) => { acumular(l.x1, l.y1); acumular(l.x2, l.y2); });
+      data.polilinhas.forEach((p) => p.pontos.forEach((pt) => acumular(pt.x, pt.y)));
+      data.circulos.forEach((c) => { acumular(c.cx - c.raio, c.cy - c.raio); acumular(c.cx + c.raio, c.cy + c.raio); });
+    }
+
+    if (minX === Infinity) { minX = 0; minY = 0; maxX = canvas.getWidth(); maxY = canvas.getHeight(); }
+
+    const margin = 40;
+    const viewBoxX = minX - margin;
+    const viewBoxY = minY - margin;
+    const viewBoxW = (maxX - minX) + margin * 2;
+    const viewBoxH = (maxY - minY) + margin * 2;
+
+    // 2. Gerar o SVG dos objetos Fabric.js (ícones, conexões, rooms) — já vetorial e correto
+    const svgFabric = canvas.toSVG({
+      viewBox: { x: viewBoxX, y: viewBoxY, width: viewBoxW, height: viewBoxH },
+      width: `${viewBoxW}`,
+      height: `${viewBoxH}`,
+    });
+
+    // 3. Construir manualmente os elementos SVG da planta nativa (paredes),
+    //    já que o Fabric.js não sabe que ela existe.
+    let paredesSvg = '<g id="dxf-paredes" stroke="#4b5563" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">';
+
+    if (data) {
+      data.linhas.forEach((l) => {
+        paredesSvg += `<line x1="${l.x1.toFixed(2)}" y1="${l.y1.toFixed(2)}" x2="${l.x2.toFixed(2)}" y2="${l.y2.toFixed(2)}" />`;
+      });
+      data.polilinhas.forEach((p) => {
+        const pontosStr = p.pontos.map((pt) => `${pt.x.toFixed(2)},${pt.y.toFixed(2)}`).join(" ");
+        const tag = p.fechada ? "polygon" : "polyline";
+        paredesSvg += `<${tag} points="${pontosStr}" />`;
+      });
+      data.circulos.forEach((c) => {
+        paredesSvg += `<circle cx="${c.cx.toFixed(2)}" cy="${c.cy.toFixed(2)}" r="${c.raio.toFixed(2)}" />`;
+      });
+    }
+    paredesSvg += "</g>";
+
+    // 4. Injetar as paredes DENTRO do SVG do Fabric.js, logo a seguir à tag <svg ...>,
+    //    para ficarem desenhadas por baixo dos ícones (ordem = ordem no documento SVG).
+    const svgFinal = svgFabric.replace(
+      /(<svg[^>]*>)/,
+      `$1\n${paredesSvg}\n`
+    );
+
+    // 5. Download como ficheiro .svg
+    const blob = new Blob([svgFinal], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `electrilal_planta_${Date.now()}.svg`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
   return {
     fabricCanvasRef,
     pronto,
@@ -1943,6 +2024,7 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     setGridVisible,
     toggleFloorPlanLock,
     exportarPNG,
+    exportarSVG,
     // Floor plan editing refs (for useFloorPlanTools)
     geometriaRef,
     floorPlanGroupRef,
