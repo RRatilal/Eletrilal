@@ -545,6 +545,7 @@ export const ICON_MAP = {
   lampada_spot: IconLampadaSpot,
   lampada_tubular: IconLampadaTubular,
   lampada_led: IconLampadaLed,
+  lampada_led_fita: IconLampadaLed,
   lampada_pendente: IconLampadaPendente,
   luminaria: IconLampada,
 

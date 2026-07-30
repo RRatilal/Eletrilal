@@ -1,7 +1,9 @@
 /* ========================================================================
-   Toolbar — Fixed top bar
+   Toolbar — Minimal top bar + Floating left panel
    ======================================================================== */
-.toolbar {
+
+/* ─── Minimal Top Bar ──────────────────────────────────────────── */
+.toolbar-minimal {
   position: fixed;
   top: 0;
   left: 0;
@@ -16,96 +18,63 @@
   -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border-subtle);
   z-index: 100;
-  gap: var(--space-md);
-}
-
-.toolbar-left,
-.toolbar-center,
-.toolbar-right {
-  display: flex;
-  align-items: center;
   gap: var(--space-sm);
 }
 
-.toolbar-left {
+.toolbar-minimal-left,
+.toolbar-minimal-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.toolbar-minimal-left {
   flex: 1;
   min-width: 0;
 }
 
-.toolbar-center {
+.toolbar-minimal-right {
   flex-shrink: 0;
 }
 
-.toolbar-right {
-  flex: 1;
-  justify-content: flex-end;
-}
-
-/* Toolbar buttons */
-.toolbar-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 6px 12px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-family: var(--font-family);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  white-space: nowrap;
-}
-
-.toolbar-btn:hover {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-}
-
-.toolbar-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.toolbar-btn-icon {
+/* Minimal bar buttons */
+.toolbar-minimal-btn {
   width: 32px;
   height: 32px;
-  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
   font-size: 14px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
 }
 
-.toolbar-btn-icon.active {
+.toolbar-minimal-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+.toolbar-minimal-btn.active {
   background: var(--accent-glow);
   border-color: var(--accent-primary);
   color: var(--accent-primary-hover);
 }
 
-.toolbar-btn-active {
-  background: rgba(139, 92, 246, 0.15);
-  border-color: var(--accent-secondary);
-  color: var(--accent-secondary);
-}
-
-.toolbar-btn-active:hover {
-  background: rgba(139, 92, 246, 0.25);
-}
-
-/* Divider */
-.toolbar-divider {
+/* Divider na minimal bar */
+.toolbar-minimal-divider {
   width: 1px;
-  height: 20px;
+  height: 18px;
   background: var(--border-default);
   margin: 0 var(--space-xs);
 }
 
-/* Breadcrumb */
-.toolbar-breadcrumb {
+/* Breadcrumb minimal */
+.toolbar-minimal-breadcrumb {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
@@ -113,17 +82,17 @@
   min-width: 0;
 }
 
-.breadcrumb-label {
+.toolbar-minimal-breadcrumb .breadcrumb-label {
   color: var(--text-tertiary);
   font-weight: 500;
 }
 
-.breadcrumb-sep {
+.toolbar-minimal-breadcrumb .breadcrumb-sep {
   color: var(--text-tertiary);
   opacity: 0.4;
 }
 
-.breadcrumb-current {
+.toolbar-minimal-breadcrumb .breadcrumb-current {
   color: var(--text-primary);
   font-weight: 600;
   white-space: nowrap;
@@ -136,6 +105,7 @@
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
   white-space: nowrap;
+  margin-right: var(--space-xs);
   transition: color var(--transition-fast);
 }
 
@@ -154,15 +124,194 @@
   50% { opacity: 0.4; }
 }
 
-/* PDF import button — destaque com cor indigo */
-.toolbar-btn-pdf {
-  background: rgba(99, 102, 241, 0.12) !important;
-  border-color: rgba(99, 102, 241, 0.3) !important;
-  color: #818cf8 !important;
+/* ─── Floating Panel ──────────────────────────────────────────── */
+.toolbar-floating-panel {
+  position: fixed;
+  top: calc(var(--toolbar-height) + var(--space-sm));
+  left: 0;
+  width: var(--panel-width);
+  max-height: calc(100vh - var(--toolbar-height) - var(--space-xl));
+  background: var(--bg-dropdown);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-default);
+  border-left: none;
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  box-shadow: var(--shadow-lg);
+  z-index: 102;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  transform: translateX(-100%);
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
+  pointer-events: none;
 }
 
-.toolbar-btn-pdf:hover:not(:disabled) {
-  background: rgba(99, 102, 241, 0.22) !important;
-  border-color: #6366f1 !important;
-  color: #a5b4fc !important;
+.toolbar-floating-panel.is-open {
+  transform: translateX(0);
+  pointer-events: auto;
+  box-shadow: var(--shadow-lg), 4px 0 24px rgba(0, 0, 0, 0.08);
+}
+
+/* ─── Panel Header ────────────────────────────────────────────── */
+.toolbar-floating-panel .panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.toolbar-floating-panel .panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--accent-primary);
+}
+
+.toolbar-floating-panel .panel-title {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.toolbar-floating-panel .panel-close-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.toolbar-floating-panel .panel-close-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+/* ─── Groups ──────────────────────────────────────────────────── */
+.toolbar-floating-panel .panel-group {
+  padding: var(--space-sm) var(--space-lg);
+}
+
+.toolbar-floating-panel .panel-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-sm);
+  padding-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* ─── Tool Buttons within panel ───────────────────────────────── */
+.toolbar-floating-panel .panel-tool-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  margin-bottom: 2px;
+}
+
+.toolbar-floating-panel .panel-tool-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.toolbar-floating-panel .panel-tool-btn:active {
+  background: var(--bg-secondary);
+  transform: scale(0.98);
+}
+
+.toolbar-floating-panel .panel-tool-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.toolbar-floating-panel .panel-tool-btn:disabled:hover {
+  background: transparent;
+  border-color: transparent;
+  transform: none;
+}
+
+.toolbar-floating-panel .panel-tool-btn.active {
+  background: var(--accent-glow);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary-hover);
+}
+
+.toolbar-floating-panel .panel-tool-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  font-size: 15px;
+}
+
+.toolbar-floating-panel .panel-tool-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Divider ─────────────────────────────────────────────────── */
+.toolbar-floating-panel .panel-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 2px var(--space-lg);
+  flex-shrink: 0;
+}
+
+/* ─── Panel Footer ────────────────────────────────────────────── */
+.toolbar-floating-panel .panel-footer {
+  padding: var(--space-sm) var(--space-lg);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  text-align: center;
+}
+
+/* ─── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .toolbar-floating-panel {
+    width: 85vw;
+    max-width: 300px;
+  }
+}
+
+/* ─── Light mode refinements ──────────────────────────────────── */
+[data-theme="light"] .toolbar-floating-panel {
+  border-color: var(--border-strong);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .toolbar-floating-panel.is-open {
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12), 4px 0 24px rgba(0, 0, 0, 0.06);
 }

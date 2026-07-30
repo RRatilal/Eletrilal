@@ -18,6 +18,7 @@ export default function Canvas({
   conexoes,
   rooms = [],
   modoCabo,
+  modoFitaLed,
   plantaTravada = false,
   onComponenteCriado,
   onComponenteAtualizado,
@@ -40,7 +41,7 @@ export default function Canvas({
   const appliedFloorPlanModsRef = useRef(null);
   const {
     fabricCanvasRef, pronto,
-    desenharGeometria, desenharComponente,
+    desenharGeometria, desenharComponente, desenharFitaLed,
     desenharConexao, desenharRoom, atualizarConexoes, encontrarComponenteEm,
     limpar, setGridVisible, toggleFloorPlanLock, exportarPNG,
     geometriaRef, floorPlanGroupRef, floorPlanScaleRef,
@@ -50,6 +51,11 @@ export default function Canvas({
   const ultimosCabosRef = useRef([]); // IDs dos cabos criados no modo actual
   const toast = useToast();
   const [caboOrigem, setCaboOrigem] = useState(null);
+  const [fitaLedPontos, setFitaLedPontos] = useState([]);
+  const fitaLedPontosRef = useRef([]);
+  useEffect(() => { fitaLedPontosRef.current = fitaLedPontos; }, [fitaLedPontos]);
+  const fitaLedTempLine = useRef(null);
+  const fitaLedTempCircles = useRef([]);
 
   // Forward do fabricCanvasRef e refs do floor plan para o componente pai
   useEffect(() => {
@@ -88,10 +94,27 @@ export default function Canvas({
       removerAlcaCurva();
       if (!target || !target.data?.isConnection) return;
 
-      const c1_x = target.data.c1_x;
-      const c1_y = target.data.c1_y;
+      let c1_x = target.data.c1_x;
+      let c1_y = target.data.c1_y;
 
-      if (c1_x == null || c1_y == null) return;
+      // Se não existe ponto de curva, colocar a alça no ponto médio da linha
+      // para permitir criar uma curva a partir de uma linha reta
+      if (c1_x == null || c1_y == null) {
+        const pathArr = target.path;
+        if (!pathArr || pathArr.length < 2) return;
+
+        const origX = pathArr[0][1];
+        const origY = pathArr[0][2];
+        const lastIdx = pathArr.length - 1;
+        const cmd = pathArr[lastIdx];
+        const destX = cmd[0] === 'Q' ? cmd[3] : cmd[1];
+        const destY = cmd[0] === 'Q' ? cmd[4] : cmd[2];
+
+        // Guardar ponto médio como world coordinates para que o handle
+        // possa ser arrastado e criar uma curva
+        c1_x = (origX + destX) / (2 * ESCALA_PX_POR_METRO);
+        c1_y = -(origY + destY) / (2 * ESCALA_PX_POR_METRO);
+      }
 
       const px = c1_x * ESCALA_PX_POR_METRO;
       const py = -c1_y * ESCALA_PX_POR_METRO;
@@ -280,7 +303,20 @@ export default function Canvas({
     componentes.forEach((c) => {
       if (desenhadosRef.current.has(c.id)) return;
       desenhadosRef.current.add(c.id);
-      desenharComponente(c, { onModified: handleModified });
+      if (c.tipo === "lampada_led_fita") {
+        try {
+          const rotulo = JSON.parse(c.rotulo || "{}");
+          if (rotulo.pontos && rotulo.pontos.length >= 2) {
+            desenharFitaLed(rotulo.pontos, c.id);
+          } else {
+            desenharComponente(c, { onModified: handleModified });
+          }
+        } catch {
+          desenharComponente(c, { onModified: handleModified });
+        }
+      } else {
+        desenharComponente(c, { onModified: handleModified });
+      }
     });
     
     // 4. Desenhar conexões elétricas (cabos)
@@ -365,7 +401,20 @@ export default function Canvas({
     componentes.forEach((c) => {
       if (desenhadosRef.current.has(c.id)) return;
       desenhadosRef.current.add(c.id);
-      desenharComponente(c, { onModified: handleModified });
+      if (c.tipo === "lampada_led_fita") {
+        try {
+          const rotulo = JSON.parse(c.rotulo || "{}");
+          if (rotulo.pontos && rotulo.pontos.length >= 2) {
+            desenharFitaLed(rotulo.pontos, c.id);
+          } else {
+            desenharComponente(c, { onModified: handleModified });
+          }
+        } catch {
+          desenharComponente(c, { onModified: handleModified });
+        }
+      } else {
+        desenharComponente(c, { onModified: handleModified });
+      }
       adicionou = true;
     });
     if (adicionou) fabricCanvasRef.current?.requestRenderAll();
@@ -377,9 +426,20 @@ export default function Canvas({
     atualizarConexoes(conexoes, componentes);
   }, [conexoes, pronto]);
 
-  // Modo de desenho de cabos
+  // ─── Modo de desenho de cabos ───────────────────────────────────────────
   useEffect(() => {
     if (!pronto || !modoCabo) {
+      if (caboOrigem) {
+        const canvas = fabricCanvasRef.current;
+        if (canvas) {
+          const origObj = canvas.getObjects().find((o) => o.data?.componentId === caboOrigem);
+          if (origObj) {
+            origObj.set({ stroke: origObj._origStroke || null, strokeWidth: 1 });
+            delete origObj._origStroke;
+            canvas.requestRenderAll();
+          }
+        }
+      }
       setCaboOrigem(null);
       return;
     }
@@ -399,28 +459,23 @@ export default function Canvas({
         setCaboOrigem(compId);
         onCaboOrigemSelecionada?.(compId);
 
-        // Destacar visualmente o componente de origem selecionado
         const targetObj = canvas.getObjects().find((o) => o.data?.componentId === compId);
         if (targetObj) {
           targetObj._origStroke = targetObj.stroke;
           targetObj.set({ stroke: "#22c55e", strokeWidth: 3 });
           canvas.requestRenderAll();
         }
-
         toast.info("Clique no componente de destino para criar o cabo");
       } else {
         if (compId === caboOrigem) {
           toast.warning("Clique num componente diferente");
           return;
         }
-
-        // Remover destaque do 1º componente
         const origObj = canvas.getObjects().find((o) => o.data?.componentId === caboOrigem);
         if (origObj) {
           origObj.set({ stroke: origObj._origStroke || null, strokeWidth: 1 });
           delete origObj._origStroke;
         }
-
         criarConexao(caboOrigem, compId);
         setCaboOrigem(null);
         onCaboOrigemSelecionada?.(null);
@@ -435,16 +490,12 @@ export default function Canvas({
         canvas.setCursor("default");
         canvas.selection = true;
       }
-
-      // Limpar destaques visuais de origem se o modo for interrompido
       if (caboOrigem) {
         const origObj = canvas.getObjects().find((o) => o.data?.componentId === caboOrigem);
         if (origObj) {
           origObj.set({ stroke: origObj._origStroke || null, strokeWidth: 1 });
           delete origObj._origStroke;
-          if (canvas.upperCanvasEl) {
-            canvas.requestRenderAll();
-          }
+          if (canvas.upperCanvasEl) canvas.requestRenderAll();
         }
       }
     };
@@ -453,14 +504,127 @@ export default function Canvas({
   useEffect(() => {
     if (!modoCabo) {
       setCaboOrigem(null);
-      ultimosCabosRef.current = []; // Limpar histórico ao sair do modo cabo
+      ultimosCabosRef.current = [];
     }
   }, [modoCabo]);
+
+  // ─── Modo de desenho Fita LED ─────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!pronto || !modoFitaLed) {
+      // Limpar temporários ao sair
+      if (fitaLedTempLine.current && canvas) {
+        canvas.remove(fitaLedTempLine.current);
+        fitaLedTempLine.current = null;
+      }
+      fitaLedTempCircles.current.forEach((c) => { if (canvas) canvas.remove(c); });
+      fitaLedTempCircles.current = [];
+      setFitaLedPontos([]);
+      return;
+    }
+    if (!canvas) return;
+
+    canvas.setCursor("crosshair");
+    canvas.selection = false;
+
+    function handleClick(opt) {
+      const pointer = canvas.getPointer(opt.e);
+      const px = pointer.x;
+      const py = pointer.y;
+
+      setFitaLedPontos((prev) => {
+        const novos = [...prev, { x: px, y: py }];
+
+        // Desenhar círculo no ponto
+        const circle = new fabric.Circle({
+          left: px - 4, top: py - 4,
+          radius: 4, fill: "#f59e0b", stroke: "#ffffff", strokeWidth: 1.5,
+          selectable: false, evented: false,
+        });
+        fitaLedTempCircles.current.push(circle);
+        canvas.add(circle);
+
+        // Se houver 2+ pontos, desenhar/atualizar linha
+        if (novos.length >= 2) {
+          if (fitaLedTempLine.current) canvas.remove(fitaLedTempLine.current);
+          const pathParts = novos.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`);
+          const pathStr = pathParts.join(' ');
+          const line = new fabric.Path(pathStr, {
+            stroke: "#f59e0b", strokeWidth: 4, fill: "transparent",
+            selectable: false, evented: false,
+          });
+          canvas.add(line);
+          fitaLedTempLine.current = line;
+        }
+
+        canvas.requestRenderAll();
+        return novos;
+      });
+    }
+
+    function handleDblClick() {
+      finalizarFitaLed();
+    }
+
+    canvas.on("mouse:down", handleClick);
+    canvas.on("mouse:dblclick", handleDblClick);
+
+    return () => {
+      canvas.off("mouse:down", handleClick);
+      canvas.off("mouse:dblclick", handleDblClick);
+      if (canvas.upperCanvasEl) {
+        canvas.setCursor("default");
+        canvas.selection = true;
+      }
+    };
+  }, [pronto, modoFitaLed]);
+
+  async function finalizarFitaLed() {
+    const canvas = fabricCanvasRef.current;
+    const pontos = fitaLedPontosRef.current;
+    if (pontos.length < 2) {
+      toast.warning("Adicione pelo menos 2 pontos para criar a fita LED");
+      return;
+    }
+
+    // Remover temporários
+    if (fitaLedTempLine.current && canvas) {
+      canvas.remove(fitaLedTempLine.current);
+      fitaLedTempLine.current = null;
+    }
+    fitaLedTempCircles.current.forEach((c) => { if (canvas) canvas.remove(c); });
+    fitaLedTempCircles.current = [];
+
+    // Coordenadas mundo (converter px para metros)
+    const pontosMundo = pontos.map((p) => ({
+      x: p.x / ESCALA_PX_POR_METRO,
+      y: -p.y / ESCALA_PX_POR_METRO,
+    }));
+
+    try {
+      const rotulo = JSON.stringify({ pontos: pontosMundo, localizacao: "teto" });
+      const { x, y } = pontosMundo[0];
+      const novoComponente = await api.criarComponente(projectId, {
+        tipo: "lampada_led_fita",
+        x, y,
+        potencia_w: 0,
+        rotulo,
+      });
+      onComponenteCriado?.(novoComponente);
+      toast.success("Fita de LED criada! (Duplo clique p/ finalizar)");
+    } catch (err) {
+      toast.error(`Erro ao criar fita LED: ${err.message}`);
+    }
+
+    setFitaLedPontos([]);
+    canvas.requestRenderAll();
+  }
 
   // Evitar stale closures mantendo referências atualizadas em refs
   const callbacksRef = useRef({});
   callbacksRef.current = {
     modoCabo,
+    modoFitaLed,
     caboOrigem,
     onCaboOrigemSelecionada,
     executarRemocoes,
@@ -532,10 +696,21 @@ export default function Canvas({
         }
       }
 
-      if (e.key === "Escape" && callbacksRef.current.caboOrigem) {
-        setCaboOrigem(null);
-        callbacksRef.current.onCaboOrigemSelecionada?.(null);
-        toast.info("Desenho de cabo cancelado");
+      if (e.key === "Escape") {
+        if (callbacksRef.current.caboOrigem) {
+          setCaboOrigem(null);
+          callbacksRef.current.onCaboOrigemSelecionada?.(null);
+          toast.info("Desenho de cabo cancelado");
+        }
+        if (fitaLedPontosRef.current.length > 0) {
+          // Limpar temporários
+          if (fitaLedTempLine.current && c) c.remove(fitaLedTempLine.current);
+          fitaLedTempCircles.current.forEach((cir) => { if (c) c.remove(cir); });
+          fitaLedTempCircles.current = [];
+          setFitaLedPontos([]);
+          c.requestRenderAll();
+          toast.info("Desenho de fita LED cancelado");
+        }
       }
     }
 
@@ -566,6 +741,11 @@ export default function Canvas({
 
     if (componentesParaApagar.length > 0) {
       componentesParaApagar.forEach((obj) => {
+        // Remover glow associado
+        const glowObj = canvas.getObjects().find(
+          (o) => o.data?.isLedStripGlow && o.data?.componentId === obj.data?.componentId
+        );
+        if (glowObj) canvas.remove(glowObj);
         canvas.remove(obj);
         desenhadosRef.current.delete(obj.data.componentId);
       });
@@ -759,7 +939,7 @@ export default function Canvas({
 
   async function handleDrop(e) {
     e.preventDefault();
-    if (modoCabo) return;
+    if (modoCabo || modoFitaLed) return;
     const tipo = e.dataTransfer.getData("tipo-componente");
     if (!tipo || !projectId) return;
 
@@ -805,6 +985,11 @@ export default function Canvas({
             ? "🔗 Clique no componente de destino (Esc para cancelar)"
             : "🔗 Clique no componente de origem"
           }
+        </div>
+      )}
+      {modoFitaLed && (
+        <div className="cable-mode-banner" style={{ background: "#f59e0bdd" }}>
+          💡 Clique para adicionar pontos — Duplo clique para finalizar (Esc cancela)
         </div>
       )}
     </div>

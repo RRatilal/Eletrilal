@@ -1,7 +1,8 @@
 /**
  * Cliente simples para a API do backend (FastAPI local).
+ * A URL base é configurável via VITE_API_URL ou assume localhost:8000.
  */
-const BASE_URL = "http://127.0.0.1:8000/api";
+const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {

@@ -9,6 +9,7 @@ Para correr localmente:
 A API fica disponível em http://127.0.0.1:8000
 Documentação interativa (Swagger) em http://127.0.0.1:8000/docs
 """
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,10 +26,14 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS liberado para o frontend local (Vite roda por padrão em localhost:5173)
+# CORS liberado para o frontend local (configurável via env var CORS_ORIGINS)
+_cors_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173"
+).split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[o.strip() for o in _cors_origins if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

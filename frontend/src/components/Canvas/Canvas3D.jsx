@@ -2,12 +2,17 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import "./Canvas3D.css";
 
 // Alturas regulamentares padrão (em metros)
 const ALTURAS = {
   lampada: 2.7, lampada_simples: 2.7, lampada_spot: 2.7,
-  lampada_tubular: 2.7, lampada_led: 2.7, lampada_pendente: 2.5,
+  lampada_tubular: 2.7,  lampada_led: 2.7, lampada_led_fita: 2.7, lampada_pendente: 2.5,
   lampada_arandela: 1.8,
   tomada: 0.3, tomada_baixa: 0.3, tomada_media: 1.1, tomada_alta: 2.0,
   tomada_trifasica: 1.1, tomada_sensor: 1.1, tomada_dupla: 0.3, tomada_tripla: 0.3,
@@ -22,7 +27,8 @@ const ALTURAS = {
 
 const CORES_COMP = {
   lampada: 0xf59e0b, lampada_simples: 0xf59e0b, lampada_arandela: 0xf59e0b,
-  lampada_spot: 0xf59e0b, lampada_tubular: 0xf59e0b, lampada_led: 0xf59e0b,
+  lampada_spot: 0xf59e0b, lampada_tubular: 0xf59e0b,  lampada_led: 0xf59e0b,
+  lampada_led_fita: 0xf59e0b,
   lampada_pendente: 0xf59e0b,
   tomada: 0x3b82f6, tomada_baixa: 0x3b82f6, tomada_media: 0x3b82f6,
   tomada_alta: 0x3b82f6, tomada_trifasica: 0x3b82f6, tomada_sensor: 0x3b82f6,
@@ -34,6 +40,9 @@ const CORES_COMP = {
   interruptor_dimmer: 0x22c55e, interruptor_pulsador: 0x22c55e,
   quadro: 0xef4444, outro: 0x8b5cf6,
 };
+
+// Layer para bloom seletivo (apenas a fita LED bloom, resto da cena não)
+const BLOOM_LAYER = 1;
 
 // ─── Helper: Textura de gradiente radial de alta qualidade (Glow / Halo) ──────
 let glowTextureCache = null;
@@ -89,6 +98,9 @@ function getComponentGeometry(c) {
       extraMesh.position.set(c.x - 0.04, yAlt, c.y);
     } else if (c.tipo === "lampada_spot") {
       geom = new THREE.CylinderGeometry(0.05, 0.05, 0.01, 16);
+    } else if (c.tipo === "lampada_led_fita") {
+      // Fita LED: sem geometria fixa, renderizada como polyline 3D
+      geom = null;
     } else {
       geom = new THREE.SphereGeometry(0.08, 16, 16);
     }
@@ -103,7 +115,12 @@ function getComponentGeometry(c) {
       geom = new THREE.BoxGeometry(0.06, 0.1, 0.02);
     }
   } else if (c.tipo.startsWith("interruptor")) {
-    geom = new THREE.BoxGeometry(0.08, 0.08, 0.02);
+    let width = 0.08;
+    if (c.tipo === "interruptor_duplo") width = 0.14;
+    else if (c.tipo === "interruptor_triplo") width = 0.20;
+    geom = new THREE.BoxGeometry(width, 0.08, 0.02);
+    const numSwitches = c.tipo === "interruptor_duplo" ? 2 : c.tipo === "interruptor_triplo" ? 3 : 1;
+    return { geom, cor, yFinal, extraMesh, yAlt, numSwitches };
   } else if (c.tipo === "quadro") {
     geom = new THREE.BoxGeometry(0.3, 0.4, 0.06);
   } else if (c.tipo.startsWith("caixa_passagem")) {
@@ -171,20 +188,45 @@ function getGeometryGroupKey(geom, cor) {
 
 // ─── Disposal rigoroso de objetos Three.js ──────────────────────────────────
 function disposeObject(obj) {
-  if (!obj) return;
-  if (obj.geometry) {
+  if (!obj || typeof obj !== 'object') return;
+  if (obj.geometry && typeof obj.geometry.dispose === 'function' && !obj.geometry._disposed) {
     obj.geometry.dispose();
+    obj.geometry._disposed = true;
   }
   if (obj.material) {
     if (Array.isArray(obj.material)) {
-      obj.material.forEach(m => m.dispose());
-    } else {
+      obj.material.forEach(m => { if (m && typeof m.dispose === 'function' && !m._disposed) { m.dispose(); m._disposed = true; } });
+    } else if (typeof obj.material.dispose === 'function' && !obj.material._disposed) {
       obj.material.dispose();
+      obj.material._disposed = true;
     }
   }
-  if (obj.children) {
-    obj.children.forEach(child => disposeObject(child));
+  // Dispose recursivo de children (Sprites, Groups, etc.)
+  if (obj.children && obj.children.length > 0) {
+    // Clone array porque children pode ser modificado durante iteração
+    [...obj.children].forEach(child => disposeObject(child));
   }
+  // Dispose de textures em materiais
+  if (obj.material) {
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    mats.forEach(mat => {
+      if (mat && mat.map && typeof mat.map.dispose === 'function' && !mat.map._disposed) {
+        mat.map.dispose();
+        mat.map._disposed = true;
+      }
+    });
+  }
+}
+
+/**
+ * Percorre todos os objetos de uma cena Three.js e faz dispose recursivo.
+ * Isto é necessário porque scene.clear() apenas remove referências sem libertar
+ * memória GPU (geometrias, materiais, texturas).
+ */
+function disposeScene(scene) {
+  if (!scene) return;
+  // Percorre todos os objetos na cena (incluindo groups aninhados)
+  scene.traverse(obj => disposeObject(obj));
 }
 
 export default function Canvas3D({
@@ -215,6 +257,11 @@ export default function Canvas3D({
   const needsRenderRef = useRef(false);
   const animFrameIdRef = useRef(null);
   const isDisposedRef = useRef(false);
+  const bloomComposerRef = useRef(null);
+  const finalComposerRef = useRef(null);
+  const bloomBlendPassRef = useRef(null);
+  const origMatsRef = useRef({});
+  const darkMatRef = useRef(new THREE.MeshBasicMaterial({ color: 0x000000 }));
 
   // ─── Render on Demand ─────────────────────────────────────────────────────
   const requestRender = useCallback(() => {
@@ -225,7 +272,45 @@ export default function Canvas3D({
         if (isDisposedRef.current) return;
         if (needsRenderRef.current) {
           controlsRef.current?.update();
-          rendererRef.current?.render(sceneRef.current, cameraRef.current);
+
+          // Selective bloom: escurecer objetos sem bloom, renderizar bloom, restaurar, compor final
+          const bScene = sceneRef.current;
+          const bloomC = bloomComposerRef.current;
+          const finalC = finalComposerRef.current;
+          const blendPass = bloomBlendPassRef.current;
+
+          if (bloomC && finalC && blendPass) {
+            // 1. Guardar background original e escurecer
+            const origBg = bScene.background;
+            bScene.background = new THREE.Color(0x000000);
+            const mats = origMatsRef.current;
+            const darkMat = darkMatRef.current;
+            bScene.traverse((obj) => {
+              if (obj.isMesh && !obj.layers.test(BLOOM_LAYER)) {
+                mats[obj.uuid] = obj.material;
+                obj.material = darkMat;
+              }
+            });
+
+            // 2. Renderizar bloom (só objetos no bloom layer ficam brilhantes → só eles bloomam)
+            bloomC.render();
+
+            // 3. Restaurar materiais e background
+            bScene.background = origBg;
+            bScene.traverse((obj) => {
+              if (mats[obj.uuid]) {
+                obj.material = mats[obj.uuid];
+                delete mats[obj.uuid];
+              }
+            });
+
+            // 4. Compor final (cena normal + bloom sobreposto)
+            blendPass.uniforms.bloomTexture.value = bloomC.renderTarget2.texture;
+            finalC.render();
+          } else {
+            rendererRef.current?.render(bScene, cameraRef.current);
+          }
+
           needsRenderRef.current = false;
         }
       });
@@ -284,6 +369,46 @@ export default function Canvas3D({
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     rendererRef.current = renderer;
+
+    // ─── Selective Bloom: dois compositors (bloom + final) ──────────────────
+    const bloomC = new EffectComposer(renderer);
+    bloomC.addPass(new RenderPass(scene, camera));
+    bloomC.addPass(new UnrealBloomPass(
+      new THREE.Vector2(width, height), 1.2, 0.3, 0.9
+    ));
+    bloomComposerRef.current = bloomC;
+
+    const finalC = new EffectComposer(renderer);
+    finalC.addPass(new RenderPass(scene, camera));
+    // Shader para compor: cena normal + bloom em cima
+    const blendMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        bloomTexture: { value: null },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform sampler2D bloomTexture;
+        varying vec2 vUv;
+        void main() {
+          vec4 base = texture2D(tDiffuse, vUv);
+          vec4 bloom = texture2D(bloomTexture, vUv);
+          gl_FragColor = base + bloom;
+        }
+      `,
+    });
+    const blendPass = new ShaderPass(blendMat);
+    finalC.addPass(blendPass);
+    finalC.addPass(new OutputPass());
+    finalComposerRef.current = finalC;
+    bloomBlendPassRef.current = blendPass;
 
     // 2. Controlos da Câmara
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -397,14 +522,12 @@ export default function Canvas3D({
         transparent: true, opacity: wallOpacity, side: THREE.DoubleSide,
       });
       trackedMaterials.push(dxfWallMat);
-      geometriesRef.current.push(dxfWallMat);
 
       const glassMat = new THREE.MeshStandardMaterial({
         color: 0x38bdf8, roughness: 0.1, metalness: 0.9,
         transparent: true, opacity: 0.45, side: THREE.DoubleSide,
       });
       trackedMaterials.push(glassMat);
-      geometriesRef.current.push(glassMat);
 
       const linesForAnalysis = [];
 
@@ -739,23 +862,22 @@ export default function Canvas3D({
       return [String(rawValue).trim().toLowerCase()].filter(Boolean);
     };
 
-    // Helper: determinar quais lâmpadas estão ligadas a um interruptor (ESTRITAMENTE por rótulos/comandos)
-    const getLinkedLamps = (switchComp) => {
+    // Helper: determinar quais lâmpadas estão ligadas a um comando específico de um interruptor
+    const getLinkedLamps = (switchComp, commandIndex = 0) => {
       const switchComandos = getComponentComandosArray(switchComp);
+      const comando = switchComandos[commandIndex];
+      if (!comando) return [];
+
       const linkedIds = new Set();
 
-      // Matched ESTRITAMENTE por Comando/Rótulo (ex: "a" ou ["a", "b"])
-      if (switchComandos.length > 0) {
-        componentes.forEach((c) => {
-          if (c.tipo.startsWith("lampada")) {
-            const lampComandos = getComponentComandosArray(c);
-            const hasMatch = switchComandos.some((sc) => lampComandos.includes(sc));
-            if (hasMatch) {
-              linkedIds.add(c.id);
-            }
+      componentes.forEach((c) => {
+        if (c.tipo.startsWith("lampada")) {
+          const lampComandos = getComponentComandosArray(c);
+          if (lampComandos.includes(comando)) {
+            linkedIds.add(c.id);
           }
-        });
-      }
+        }
+      });
 
       return Array.from(linkedIds);
     };
@@ -787,7 +909,8 @@ export default function Canvas3D({
 
     // Helper para atualizar visual da lâmpada (ON/OFF)
     const updateLamp3DState = (lampObjs) => {
-      const { pointLight, haloSprite, spotFloorMesh, lampMesh, baseWatts, isOn, hasPower } = lampObjs;
+      const { pointLight, haloSprite, spotFloorMesh, lampMesh, baseWatts, isOn, hasPower,
+              isLedStrip, glowSprites } = lampObjs;
 
       // Uma luz SÓ acende se tiver potência configurada (> 0 W) E o interruptor associado estiver LIGADO (isOn)
       const shouldBeLit = hasPower && isOn;
@@ -798,9 +921,20 @@ export default function Canvas3D({
         if (haloSprite) haloSprite.material.opacity = 0.8;
         if (spotFloorMesh) spotFloorMesh.material.opacity = 0.35;
         if (lampMesh && lampMesh.material) {
-          lampMesh.material.color.setHex(0xfbbf24); // Amarelo aceso brilhante
-          lampMesh.material.emissive.setHex(0xfbbf24);
-          lampMesh.material.emissiveIntensity = isDia ? 0.4 : 2.0;
+          if (isLedStrip) {
+            // Fita LED: brilho contínuo ao longo de toda a fita (emissão forte)
+            lampMesh.material.color.setHex(0xfbbf24);
+            lampMesh.material.emissive.setHex(0xfbbf24);
+            lampMesh.material.emissiveIntensity = isDia ? 5.0 : 12.0;
+          } else {
+            lampMesh.material.color.setHex(0xfbbf24);
+            lampMesh.material.emissive.setHex(0xfbbf24);
+            lampMesh.material.emissiveIntensity = isDia ? 0.4 : 2.0;
+          }
+        }
+        // Glow sprites da fita LED
+        if (glowSprites) {
+          glowSprites.forEach(sprite => { sprite.material.opacity = 0.55; });
         }
       } else {
         if (pointLight) pointLight.intensity = 0.0;
@@ -811,13 +945,16 @@ export default function Canvas3D({
           lampMesh.material.emissive.setHex(0x000000);
           lampMesh.material.emissiveIntensity = 0.0;
         }
+        if (glowSprites) {
+          glowSprites.forEach(sprite => { sprite.material.opacity = 0.0; });
+        }
       }
     };
 
     let shadowPointLightCount = 0;
 
     componentes.forEach((c) => {
-      const { geom, cor, yFinal, extraMesh } = getComponentGeometry(c);
+      const { geom, cor, yFinal, extraMesh, numSwitches } = getComponentGeometry(c);
       const watts = getComponentWatts(c);
       const hasPower = watts > 0;
 
@@ -914,8 +1051,29 @@ export default function Canvas3D({
           if (c.tipo === "camera") mesh.rotation.x = Math.PI / 6;
 
           if (c.tipo.startsWith("interruptor")) {
-            mesh.userData = { isSwitch: true, component: c };
-            switchMeshesRef.push(mesh);
+            const nSwitches = numSwitches || 1;
+            if (nSwitches > 1) {
+              // Multi-switch: criar botões clicáveis individuais sobre a placa base
+              const spacing = 0.055;
+              const totalWidth = (nSwitches - 1) * spacing;
+              for (let i = 0; i < nSwitches; i++) {
+                const btnGeom = new THREE.BoxGeometry(0.035, 0.045, 0.005);
+                const btnMat = new THREE.MeshStandardMaterial({
+                  color: 0x1a1a1a, roughness: 0.7, metalness: 0.1,
+                });
+                trackedMaterials.push(btnMat);
+                const btn = new THREE.Mesh(btnGeom, btnMat);
+                btn.position.set(-totalWidth / 2 + i * spacing, 0, -0.013);
+                btn.userData = { isSwitch: true, component: c, commandIndex: i };
+                switchMeshesRef.push(btn);
+                mesh.add(btn);
+                geometriesRef.current.push(btnGeom);
+              }
+            } else {
+              // Simples: a placa toda é clicável
+              mesh.userData = { isSwitch: true, component: c, commandIndex: 0 };
+              switchMeshesRef.push(mesh);
+            }
           }
 
           scene.add(mesh);
@@ -946,6 +1104,155 @@ export default function Canvas3D({
     // Atualizar estado inicial de todas as lâmpadas (desligadas por padrão)
     lampStateMapRef.current.forEach((lampObjs) => {
       updateLamp3DState(lampObjs);
+    });
+
+    // ─── Fita de LED 3D (segmentos retos iguais ao 2D) ───────────────────────
+    componentes.forEach((c) => {
+      if (c.tipo !== "lampada_led_fita") return;
+
+      // Parse pontos e localizacao do rotulo JSON
+      let pontos = [];
+      let localizacao = "teto";
+      try {
+        const parsed = JSON.parse(c.rotulo || "{}");
+        if (parsed.pontos && parsed.pontos.length >= 2) {
+          pontos = parsed.pontos;
+        }
+        if (parsed.localizacao) localizacao = parsed.localizacao;
+      } catch {}
+
+      if (pontos.length < 2) return;
+
+      const yLevel = localizacao === "parede" ? 1.8 : 2.7;
+      const watts = getComponentWatts(c);
+      const hasPower = watts > 0;
+
+      // Converter pontos mundo 2D → 3D (x, yLevel, -y = Z)
+      const pts3D = pontos.map((p) => new THREE.Vector3(p.x, yLevel, -p.y));
+
+      // ─── Mesh da fita: caixas individuais em cada segmento (merge) ─────
+      const segmentGeoms = [];
+      const stripRadius = 0.006; // raio do tubo
+      const tempMatrix = new THREE.Matrix4();
+      const tempPos = new THREE.Vector3();
+      const tempQuat = new THREE.Quaternion();
+      const yAxis = new THREE.Vector3(0, 1, 0);
+      const forward = new THREE.Vector3();
+
+      for (let i = 0; i < pts3D.length - 1; i++) {
+        const p1 = pts3D[i];
+        const p2 = pts3D[i + 1];
+        const dx = p2.x - p1.x;
+        const dz = p2.z - p1.z;
+        const dy = p2.y - p1.y;
+        const segLen = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (segLen < 0.001) continue;
+
+        const segGeom = new THREE.CylinderGeometry(stripRadius, stripRadius, segLen, 6, 1);
+        segGeom.rotateX(Math.PI / 2); // Eixo Z -> Y
+
+        // Posicionar no meio do segmento
+        tempPos.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
+
+        // Orientar ao longo da direção do segmento
+        forward.set(dx, dy, dz).normalize();
+        tempQuat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), forward);
+        tempMatrix.compose(tempPos, tempQuat, new THREE.Vector3(1, 1, 1));
+        segGeom.applyMatrix4(tempMatrix);
+
+        segmentGeoms.push(segGeom);
+        geometriesRef.current.push(segGeom);
+      }
+
+      let stripMesh = null;
+      if (segmentGeoms.length > 0) {
+        let merged;
+        try {
+          merged = mergeGeometries(segmentGeoms, false);
+        } catch {
+          merged = segmentGeoms[0];
+        }
+        geometriesRef.current.push(merged);
+
+        const stripMat = new THREE.MeshStandardMaterial({
+          color: 0x64748b,
+          roughness: 0.3,
+          metalness: 0.1,
+          emissive: 0x000000,
+          emissiveIntensity: 0.0,
+        });
+        trackedMaterials.push(stripMat);
+
+        stripMesh = new THREE.Mesh(merged, stripMat);
+        // Atribuir à bloom layer (selective bloom: só a fita LED recebe bloom)
+        stripMesh.layers.set(0);
+        stripMesh.layers.enable(BLOOM_LAYER);
+        scene.add(stripMesh);
+        sceneObjectsRef.current.push(stripMesh);
+      }
+
+      // ─── Calcular comprimento total e distribuir luzes uniformemente ────
+      // Caminhar ao longo dos segmentos com passo regular (arc-length real)
+      const segmentLengths = [];
+      let totalLength = 0;
+      for (let i = 0; i < pts3D.length - 1; i++) {
+        const p1 = pts3D[i];
+        const p2 = pts3D[i + 1];
+        const segLen = p1.distanceTo(p2);
+        segmentLengths.push(segLen);
+        totalLength += segLen;
+      }
+
+      if (totalLength < 0.01) return;
+
+      // ─── Glow sprites ao longo da fita (brilho consistente, independente do zoom) ───
+      const glowSprites = [];
+      const numGlowSprites = Math.max(2, Math.min(12, Math.round(totalLength / 0.8)));
+      const glowTex = getGlowTexture();
+      for (let g = 0; g < numGlowSprites; g++) {
+        // Posição ao longo da polyline: caminhar por arc-length real
+        const targetDist = (g + 0.5) * (totalLength / numGlowSprites);
+        let accum = 0;
+        let pos = null;
+        for (let s = 0; s < pts3D.length - 1; s++) {
+          const segLen = pts3D[s].distanceTo(pts3D[s + 1]);
+          if (accum + segLen >= targetDist || s === pts3D.length - 2) {
+            const tLocal = segLen > 0 ? (targetDist - accum) / segLen : 0;
+            pos = new THREE.Vector3().lerpVectors(pts3D[s], pts3D[s + 1], Math.min(1, Math.max(0, tLocal)));
+            break;
+          }
+          accum += segLen;
+        }
+        if (!pos) continue;
+
+        const glowMat = new THREE.SpriteMaterial({
+          map: glowTex,
+          color: 0xffeedd,
+          transparent: true,
+          opacity: 0.0, // Inicia desligado
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const glowSprite = new THREE.Sprite(glowMat);
+        const spriteScale = 0.25 + (watts / 100) * 0.15; // 0.25–0.4m de raio
+        glowSprite.scale.set(spriteScale, spriteScale, 1.0);
+        glowSprite.position.copy(pos);
+        scene.add(glowSprite);
+        sceneObjectsRef.current.push(glowSprite);
+        glowSprites.push(glowSprite);
+      }
+
+      // ─── Registar no lampStateMapRef para controlo ON/OFF por comando ───
+      if (stripMesh) {
+        lampStateMapRef.current.set(c.id, {
+          lampMesh: stripMesh,
+          glowSprites,
+          baseWatts: watts,
+          hasPower,
+          isOn: false,
+          isLedStrip: true,
+        });
+      }
     });
 
     // Renderizar cada grupo como InstancedMesh
@@ -1019,7 +1326,8 @@ export default function Canvas3D({
         }
         if (hit && hit.userData?.isSwitch) {
           const switchComp = hit.userData.component;
-          const linkedLampIds = getLinkedLamps(switchComp);
+          const commandIndex = hit.userData.commandIndex ?? 0;
+          const linkedLampIds = getLinkedLamps(switchComp, commandIndex);
 
           if (linkedLampIds.length > 0) {
             const firstState = lampStateMapRef.current.get(linkedLampIds[0]);
@@ -1210,11 +1518,13 @@ export default function Canvas3D({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      bloomComposerRef.current?.setSize(w, h);
+      finalComposerRef.current?.setSize(w, h);
       requestRender();
     };
     window.addEventListener("resize", handleResize);
 
-    // ─── Cleanup: disposal rigoroso ─────────────────────────────────────────
+    // ─── Cleanup: disposal rigoroso (evita memory leak GPU) ──────────────────
     return () => {
       isDisposedRef.current = true;
       if (cameraRef.current) {
@@ -1232,25 +1542,39 @@ export default function Canvas3D({
       domElem.removeEventListener("pointerup", handlePointerUp);
       domElem.removeEventListener("pointermove", handlePointerMove);
 
-      // Dispose de todos os objetos na cena
-      sceneObjectsRef.current.forEach(disposeObject);
-      sceneObjectsRef.current = [];
+      // Dispose recursivo de TODOS os objetos na cena (inclui geometries, materials, textures, children)
+      disposeScene(scene);
 
-      // Dispose de geometrias rastreadas
+      // Dispose de geometrias rastreadas extra (geometrias que não estão na cena)
       geometriesRef.current.forEach(g => {
-        if (g && typeof g.dispose === 'function') g.dispose();
+        if (g && typeof g.dispose === 'function' && !g._disposed) g.dispose();
       });
       geometriesRef.current = [];
 
-      // Dispose de materiais rastreados
+      // Dispose de materiais rastreados extra
       trackedMaterials.forEach(m => {
-        if (m && typeof m.dispose === 'function') m.dispose();
+        if (m && typeof m.dispose === 'function' && !m._disposed) m.dispose();
       });
       materialsRef.current = [];
 
+      // Limpar arrays de referências
+      conduitMeshesRef.current = [];
+      sceneObjectsRef.current = [];
+
+      bloomComposerRef.current?.dispose();
+      finalComposerRef.current?.dispose();
       controls.dispose();
       renderer.dispose();
+      bloomComposerRef.current = null;
+      finalComposerRef.current = null;
+      bloomBlendPassRef.current = null;
       scene.clear();
+
+      // Limpar cache de textura glow no unmount final
+      if (glowTextureCache) {
+        glowTextureCache.dispose();
+        glowTextureCache = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geometria, componentes, conexoes, rooms, layerConfigs, wallOpacity, modoDiaNoite]);

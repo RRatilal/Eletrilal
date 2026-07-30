@@ -1,6 +1,7 @@
 """
 Endpoints de CRUD: projetos, componentes, circuitos e conexões.
 """
+import json
 import math
 import heapq
 import threading
@@ -10,7 +11,8 @@ from pydantic import BaseModel
 import os
 import time
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
+from sqlalchemy.orm import Session, selectinload
 
 import models
 import schemas
@@ -63,6 +65,7 @@ def _compute_dimensioning(circuito, db):
     Central dimensioning logic — uses IEC 60364 calculateCircuit.
     Returns a dict compatible with the /circuits/{id}/dimensionamento endpoint.
     """
+    # Load circuit components directly (avoid N+1 by batching at call site where possible)
     componentes = db.query(models.Component).filter(
         models.Component.circuit_id == circuito.id
     ).all()
@@ -290,7 +293,6 @@ def calcular_comprimento_max_circuito(project_id: int, circuit_id: int, db: Sess
     # 2. Carrega todas as conexões do projeto
     conexoes = db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
     
-    import json
     circ = db.query(models.Circuit).filter(models.Circuit.id == circuit_id).first()
     circ_nome = circ.nome if circ else ""
     circ_id_str = str(circuit_id)
@@ -484,13 +486,13 @@ def dimensionar_todos_circuitos(
     if not projeto:
         raise HTTPException(status_code=404, detail="Projeto não encontrado.")
 
-    circuitos = db.query(models.Circuit).filter(models.Circuit.project_id == project_id).all()
+    circuitos = db.query(models.Circuit).filter(
+        models.Circuit.project_id == project_id
+    ).options(selectinload(models.Circuit.components)).all()
     resultados = []
 
     for circuito in circuitos:
-        componentes = db.query(models.Component).filter(
-            models.Component.circuit_id == circuito.id
-        ).all()
+        componentes = circuito.components
         potencia_total = sum((c.potencia_w or 0.0) for c in componentes)
 
         comprimento_m = calcular_comprimento_max_circuito(
@@ -624,7 +626,6 @@ def criar_conexao(project_id: int, payload: schemas.ConnectionCreate, db: Sessio
         raise HTTPException(status_code=404, detail="Componente de origem ou destino não encontrado neste projeto.")
 
     # Validação: não permitir conexão duplicada (em qualquer direção)
-    from sqlalchemy import or_, and_
     existente = db.query(models.Connection).filter(
         models.Connection.project_id == project_id,
         or_(
@@ -635,7 +636,6 @@ def criar_conexao(project_id: int, payload: schemas.ConnectionCreate, db: Sessio
     if existente:
         raise HTTPException(status_code=409, detail="Já existe uma conexão entre estes dois componentes.")
 
-    import json
     data = payload.model_dump()
     if "circuitos_bloqueados" in data and isinstance(data["circuitos_bloqueados"], list):
         data["circuitos_bloqueados"] = json.dumps(data["circuitos_bloqueados"])
@@ -658,7 +658,6 @@ def atualizar_conexao(connection_id: int, payload: schemas.ConnectionUpdate, db:
     conexao = db.query(models.Connection).filter(models.Connection.id == connection_id).first()
     if not conexao:
         raise HTTPException(status_code=404, detail="Conexão não encontrada.")
-    import json
     data = payload.model_dump(exclude_unset=True)
     if "circuitos_bloqueados" in data and isinstance(data["circuitos_bloqueados"], list):
         data["circuitos_bloqueados"] = json.dumps(data["circuitos_bloqueados"])

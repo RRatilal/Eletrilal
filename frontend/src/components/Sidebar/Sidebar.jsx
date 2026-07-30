@@ -29,6 +29,7 @@ const LABELS_TIPO = {
   lampada_spot: "Spot / Olho de Boi",
   lampada_tubular: "Lâmpada Tubular",
   lampada_led: "Fita de LED",
+  lampada_led_fita: "Fita de LED",
   lampada_pendente: "Lustre / Pendente",
 
   tomada: "Tomada",
@@ -150,6 +151,28 @@ function PainelPropriedades({
   }
 
   function renderForm() {
+    // Fita de LED tem formulário especial (não usa FormLampada genérico)
+    if (tipo === "lampada_led_fita") {
+      return (
+        <div className="dynamic-form">
+          <div className="form-field">
+            <label className="field-label">Localização</label>
+            <select
+              value={electricalData.localizacao || "teto"}
+              onChange={(e) => handleChange("localizacao", e.target.value)}
+            >
+              <option value="teto">Teto</option>
+              <option value="parede">Parede</option>
+            </select>
+          </div>
+          <FormLampada
+            data={electricalData}
+            onChange={handleChange}
+            onToggleVisibility={handleToggleVisibility}
+          />
+        </div>
+      );
+    }
     switch (baseType) {
       case "lampada":
         return (

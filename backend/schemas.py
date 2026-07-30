@@ -10,7 +10,7 @@ TipoComponente = Literal[
     # Originais
     "tomada", "interruptor", "lampada", "quadro",
     # Lâmpadas
-    "lampada_simples", "lampada_arandela", "lampada_spot", "lampada_tubular", "lampada_led", "lampada_pendente",
+    "lampada_simples", "lampada_arandela", "lampada_spot", "lampada_tubular", "lampada_led", "lampada_led_fita", "lampada_pendente",
     # Tomadas
     "tomada_baixa", "tomada_media", "tomada_alta", "tomada_trifasica", "tomada_sensor", "tomada_dupla", "tomada_tripla",
     # Comunicações

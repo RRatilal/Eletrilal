@@ -26,6 +26,16 @@ export function criarElectricalData(tipo, dadosExtras = {}) {
     type: tipo,
   };
 
+  if (tipo && tipo === "lampada_led_fita") {
+    return {
+      ...base,
+      localizacao: dadosExtras.localizacao ?? "teto",
+      potencia_va: { value: dadosExtras.potencia_va ?? "100", visible: false },
+      comando: { value: dadosExtras.comando ?? "", visible: false },
+      circuito: { value: dadosExtras.circuito ?? "", visible: false },
+    };
+  }
+
   if (tipo && tipo.startsWith("lampada")) {
     return {
       ...base,
@@ -39,7 +49,7 @@ export function criarElectricalData(tipo, dadosExtras = {}) {
   if (tipo && tipo.startsWith("interruptor")) {
     return {
       ...base,
-      comando: { value: dadosExtras.comando ?? "", visible: false },
+      comando: { value: dadosExtras.comando ?? "", visible: true },
     };
   }
 
@@ -124,6 +134,19 @@ export function useCanvasIntegration(canvasInstance) {
     grupo.forEachObject((child) => {
       if (child.type === "i-text" && child.data?.labelKey) {
         const key = child.data.labelKey;
+
+        // ─── Comandos múltiplos de interruptor (comando_0, comando_1, ...) ──
+        if (key.startsWith("comando_") && data.type?.startsWith("interruptor")) {
+          const idx = parseInt(key.split("_")[1], 10);
+          const cmds = (data.comando?.value || "")
+            .split(",")
+            .map((s) => s.trim());
+          const text = cmds[idx] || "";
+          child.set("text", text);
+          child.set("visible", data.comando?.visible === true && text.length > 0);
+          return;
+        }
+
         const prop = data[key];
         // Se for { value, visible }
         if (prop && typeof prop === "object" && "value" in prop) {

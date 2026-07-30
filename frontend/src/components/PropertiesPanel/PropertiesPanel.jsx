@@ -11,6 +11,7 @@ const LABELS_TIPO = {
   lampada_spot: "Spot / Olho de Boi",
   lampada_tubular: "Lâmpada Tubular",
   lampada_led: "Fita de LED",
+  lampada_led_fita: "Fita de LED",
   lampada_pendente: "Lustre / Pendente",
 
   tomada: "Tomada",
@@ -537,29 +538,147 @@ export default function PropertiesPanel({
                   } catch {}
                   return componente.rotulo;
                 }
+                // Para fita LED, parsear JSON e mostrar apenas a localização
+                if (componente.tipo === "lampada_led_fita" && componente.rotulo) {
+                  try {
+                    const parsed = JSON.parse(componente.rotulo);
+                    if (parsed?.localizacao) {
+                      return `Fita de LED (${parsed.localizacao === "teto" ? "Teto" : "Parede"})`;
+                    }
+                  } catch {}
+                }
                 // Para outros tipos, mostrar rótulo normal
                 return componente.rotulo && componente.rotulo !== componente.tipo 
                   ? componente.rotulo 
                   : (LABELS_TIPO[componente.tipo] || componente.tipo);
               })()}
             </div>
-            {/* Interruptor: só Rótulo (1 letra) */}
-            {componente.tipo.startsWith("interruptor") ? (
-              <label>
-                <span className="field-label">Rótulo</span>
-                <input
-                  type="text"
-                  maxLength={1}
-                  defaultValue={componente.rotulo?.length === 1 ? componente.rotulo : "a"}
-                  placeholder="a"
-                  onBlur={(e) => {
-                    const val = e.target.value.slice(0, 1) || "a";
-                    handleRotulo(componente.id, val);
-                  }}
-                  disabled={loading["rotulo"]}
-                />
-              </label>
-            ) : componente.tipo.startsWith("lampada") ? (
+            {/* Interruptor: inputs individuais por comando (simples=1, duplo=2, triplo=3) */}
+            {componente.tipo.startsWith("interruptor") ? (() => {
+              const getNumComandos = (tipo) => {
+                if (!tipo || tipo === "interruptor_simples" || tipo === "interruptor") return 1;
+                if (tipo === "interruptor_duplo") return 2;
+                if (tipo === "interruptor_triplo") return 3;
+                return 1;
+              };
+              const numComandos = getNumComandos(componente.tipo);
+              const rotuloAtual = componente.rotulo || "";
+              const comandos = rotuloAtual
+                .split(",")
+                .map((s) => s.trim())
+                .slice(0, numComandos);
+              while (comandos.length < numComandos) {
+                comandos.push(String.fromCharCode(97 + comandos.length));
+              }
+              const LABELS = ["1.º Comando", "2.º Comando", "3.º Comando"];
+              return (
+                <div className="comandos-group">
+                  <span className="field-group-title">Comandos ({numComandos})</span>
+                  {comandos.map((cmd, idx) => (
+                    <label key={idx}>
+                      <span className="field-label">{LABELS[idx] || `${idx+1}.º Comando`}</span>
+                      <input
+                        type="text"
+                        maxLength={1}
+                        defaultValue={cmd}
+                        placeholder={String.fromCharCode(97 + idx).toUpperCase()}
+                        onBlur={(e) => {
+                          const novos = [...comandos];
+                          novos[idx] = e.target.value.slice(0, 1) || String.fromCharCode(97 + idx);
+                          handleRotulo(componente.id, novos.join(","));
+                        }}
+                        disabled={loading["rotulo"]}
+                      />
+                    </label>
+                  ))}
+                </div>
+              );
+            })() : componente.tipo === "lampada_led_fita" ? (() => {
+              // Parse do rotulo JSON (pontos, localizacao)
+              let fitaDados = { localizacao: "teto", pontos: [] };
+              try {
+                const parsed = JSON.parse(componente.rotulo || "{}");
+                if (parsed && typeof parsed === "object") {
+                  fitaDados = { ...fitaDados, ...parsed };
+                }
+              } catch {}
+              // Calcular comprimento total somando segmentos
+              const pontos = fitaDados.pontos || [];
+              let comprimentoTotal = 0;
+              for (let i = 1; i < pontos.length; i++) {
+                const dx = pontos[i].x - pontos[i-1].x;
+                const dy = pontos[i].y - pontos[i-1].y;
+                comprimentoTotal += Math.hypot(dx, dy);
+              }
+              const localizacao = fitaDados.localizacao || "teto";
+              const comando = fitaDados.comando || "a";
+              return (
+                <>
+                  <label>
+                    <span className="field-label">Localização</span>
+                    <select
+                      defaultValue={localizacao}
+                      onChange={async (e) => {
+                        const val = e.target.value;
+                        const novosDados = { ...fitaDados, localizacao: val };
+                        handleRotulo(componente.id, JSON.stringify(novosDados));
+                      }}
+                      disabled={loading["rotulo"]}
+                    >
+                      <option value="teto">Teto</option>
+                      <option value="parede">Parede</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span className="field-label">Comprimento</span>
+                    <input
+                      type="text"
+                      value={`${comprimentoTotal.toFixed(2)} m`}
+                      disabled
+                      readOnly
+                      className="field-readonly"
+                    />
+                  </label>
+                  <label>
+                    <span className="field-label">Comando</span>
+                    <input
+                      type="text"
+                      maxLength={1}
+                      defaultValue={comando}
+                      placeholder="A"
+                      onBlur={(e) => {
+                        const val = e.target.value.slice(0, 1) || "a";
+                        const novosDados = { ...fitaDados, comando: val };
+                        handleRotulo(componente.id, JSON.stringify(novosDados));
+                      }}
+                      disabled={loading["rotulo"]}
+                    />
+                  </label>
+                  <label>
+                    <span className="field-label">Potência (W)</span>
+                    <input
+                      type="number"
+                      defaultValue={componente.potencia_w}
+                      onBlur={(e) => handlePotencia(componente.id, e.target.value)}
+                      disabled={loading["potencia"]}
+                    />
+                  </label>
+                  <label>
+                    <span className="field-label">Circuito</span>
+                    <select
+                      defaultValue={componente.circuit_id || ""}
+                      onChange={(e) => handleCircuito(componente.id, e.target.value)}
+                      disabled={loading["circuito"]}
+                    >
+                      <option value="">Nenhum</option>
+                      {circuitos.map((c) => (
+                        <option key={c.id} value={c.id}>{c.nome}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              );
+            })() : componente.tipo.startsWith("lampada") ? (
               <>
                 <label>
                   <span className="field-label">Interruptor(es)</span>
