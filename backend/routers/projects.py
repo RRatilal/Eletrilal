@@ -19,6 +19,55 @@ import schemas
 from database import get_db, SessionLocal
 from electrical import calculator, validator
 
+# Shapely para geolocalização de componentes dentro de divisões
+from shapely.geometry import Point, shape
+
+
+# ─── Constantes para Divisão Automática de Circuitos ────────────────────────
+LIMIAR_CARGA_EXCLUSIVA_W = 2200    # ~10A @ 220V — cargas acima viram TUE
+LIMIAR_BIFASICO_SUGERIDO_W = 5000  # cargas muito altas sugerem bifásico
+PALAVRAS_AREA_MOLHADA = ["cozinha", "w.c", "wc", "lavab", "lavandaria", "varanda", "banho"]
+
+
+def _area_da_divisao(nome_divisao: str) -> str:
+    """Classifica uma divisão como 'molhada' ou 'seca' pelo nome (regra 3)."""
+    nome_lower = (nome_divisao or "").lower()
+    if any(p in nome_lower for p in PALAVRAS_AREA_MOLHADA):
+        return "molhada"
+    return "seca"
+
+
+def _encontrar_room_do_componente(comp, rooms_shapely):
+    """Devolve o nome da Room que contém o ponto (x,y) do componente, ou None."""
+    ponto = Point(comp.x or 0.0, comp.y or 0.0)
+    for nome, poligono in rooms_shapely:
+        if poligono.contains(ponto):
+            return nome
+    return None
+
+
+def _distribuir_em_circuitos(componentes: list, potencia_max_por_circuito: float) -> list:
+    """
+    Agrupa uma lista de componentes em circuitos, respeitando um teto de
+    potência por circuito (bin-packing guloso, simples e previsível).
+    """
+    grupos = []
+    grupo_atual = []
+    potencia_atual = 0.0
+
+    for comp in sorted(componentes, key=lambda c: -(c.potencia_w or 0.0)):
+        p = comp.potencia_w or 0.0
+        if grupo_atual and (potencia_atual + p) > potencia_max_por_circuito:
+            grupos.append(grupo_atual)
+            grupo_atual = []
+            potencia_atual = 0.0
+        grupo_atual.append(comp)
+        potencia_atual += p
+
+    if grupo_atual:
+        grupos.append(grupo_atual)
+    return grupos
+
 
 # ─── Dimensioning Cache (simple LRU) ──────────────────────────────────────
 _DIM_CACHE: dict = {}
@@ -449,6 +498,132 @@ def dimensionar_circuito_endpoint(
     _set_cached_dim(circuit_id, resultado)
 
     return resultado
+
+# ─── Divisão Automática de Circuitos ────────────────────────────────────────
+
+@router.post("/projects/{project_id}/dividir-circuitos-automatico")
+def dividir_circuitos_automatico(project_id: int, db: Session = Depends(get_db)):
+    """
+    Divisão inicial automática de circuitos (TUG / Iluminação / TUE), seguindo:
+    1. Cargas mono/bi/trifásicas não ficam no mesmo circuito.
+    2. Iluminação fica separada de tomadas.
+    3. Tomadas de área seca ficam separadas das de área molhada.
+    4. Cargas acima de 10A (~2200W) ficam em circuito exclusivo.
+
+    Só atua sobre componentes SEM circuito atribuído (circuit_id is None) —
+    não mexe em nada já organizado manualmente ou por uma corrida anterior.
+    """
+    projeto = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not projeto:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+    componentes = db.query(models.Component).filter(
+        models.Component.project_id == project_id,
+        models.Component.circuit_id.is_(None),
+    ).all()
+
+    if not componentes:
+        return {
+            "project_id": project_id,
+            "total_circuitos_criados": 0,
+            "circuitos": [],
+            "resumo": {"iluminacao": 0, "tug_seca": 0, "tug_molhada": 0, "tue_exclusivas": 0},
+            "mensagem": "Nenhum componente por atribuir — todos já têm circuito definido.",
+            "aviso_potencia": None,
+        }
+
+    # Aviso preventivo: componentes sem potência definida distorcem a divisão
+    # (regra 4 e a sugestão de fase dependem disto para funcionar corretamente)
+    sem_potencia = [
+        c for c in componentes
+        if ((c.tipo or "").startswith("lampada") or (c.tipo or "").startswith("tomada"))
+        and not (c.potencia_w and c.potencia_w > 0)
+    ]
+
+    aviso_potencia = None
+    if sem_potencia:
+        rotulos = [c.rotulo or f"#{c.id}" for c in sem_potencia[:5]]
+        extra = f" (+{len(sem_potencia) - 5} outros)" if len(sem_potencia) > 5 else ""
+        aviso_potencia = (
+            f"{len(sem_potencia)} componente(s) sem potência definida (ex: {', '.join(rotulos)}{extra}). "
+            "A divisão automática pode não isolar corretamente cargas de alta potência "
+            "nem sugerir a fase certa para elas. Recomenda-se preencher a potência antes "
+            "de correr esta função, especialmente em tomadas dedicadas (fogão, chuveiro, "
+            "termoacumulador, bomba de água)."
+        )
+
+    rooms = db.query(models.Room).filter(models.Room.project_id == project_id).all()
+
+    rooms_shapely = []
+    for room in rooms:
+        try:
+            geo = json.loads(room.poligono_geojson)
+            rooms_shapely.append((room.nome or "Divisão", shape(geo)))
+        except Exception:
+            continue
+
+    lampadas = [c for c in componentes if (c.tipo or "").startswith("lampada")]
+    tomadas = [c for c in componentes if (c.tipo or "").startswith("tomada")]
+
+    tomadas_exclusivas = [c for c in tomadas if (c.potencia_w or 0.0) > LIMIAR_CARGA_EXCLUSIVA_W]
+    tomadas_gerais = [c for c in tomadas if (c.potencia_w or 0.0) <= LIMIAR_CARGA_EXCLUSIVA_W]
+
+    tomadas_por_area = {"seca": [], "molhada": []}
+    for comp in tomadas_gerais:
+        nome_divisao = _encontrar_room_do_componente(comp, rooms_shapely)
+        area = _area_da_divisao(nome_divisao) if nome_divisao else "seca"
+        tomadas_por_area[area].append(comp)
+
+    circuitos_criados = []
+
+    def _criar_circuito_e_atribuir(nome, componentes_grupo, fase="monofasico"):
+        circuito = models.Circuit(project_id=project_id, nome=nome, fase=fase)
+        db.add(circuito)
+        db.flush()
+        for comp in componentes_grupo:
+            comp.circuit_id = circuito.id
+        circuitos_criados.append(circuito)
+        return circuito
+
+    # Iluminação
+    grupos_luz = _distribuir_em_circuitos(lampadas, LIMIAR_CARGA_EXCLUSIVA_W)
+    for i, grupo in enumerate(grupos_luz, start=1):
+        nome = f"[Auto] Iluminação {i}" if len(grupos_luz) > 1 else "[Auto] Iluminação"
+        _criar_circuito_e_atribuir(nome, grupo, fase="monofasico")
+
+    # TUG por área
+    for area, lista in tomadas_por_area.items():
+        if not lista:
+            continue
+        rotulo_area = "Área Seca" if area == "seca" else "Área Molhada"
+        grupos = _distribuir_em_circuitos(lista, LIMIAR_CARGA_EXCLUSIVA_W)
+        for i, grupo in enumerate(grupos, start=1):
+            nome = f"[Auto] TUG {rotulo_area} {i}" if len(grupos) > 1 else f"[Auto] TUG {rotulo_area}"
+            _criar_circuito_e_atribuir(nome, grupo, fase="monofasico")
+
+    # TUE exclusivas
+    for comp in tomadas_exclusivas:
+        potencia = comp.potencia_w or 0.0
+        fase_sugerida = "bifasico" if potencia > LIMIAR_BIFASICO_SUGERIDO_W else "monofasico"
+        rotulo_comp = comp.rotulo or f"Componente {comp.id}"
+        nome = f"[Auto] TUE — {rotulo_comp}"
+        _criar_circuito_e_atribuir(nome, [comp], fase=fase_sugerida)
+
+    db.commit()
+
+    return {
+        "project_id": project_id,
+        "total_circuitos_criados": len(circuitos_criados),
+        "circuitos": [{"id": c.id, "nome": c.nome, "fase": c.fase} for c in circuitos_criados],
+        "resumo": {
+            "iluminacao": len(lampadas),
+            "tug_seca": len(tomadas_por_area["seca"]),
+            "tug_molhada": len(tomadas_por_area["molhada"]),
+            "tue_exclusivas": len(tomadas_exclusivas),
+        },
+        "aviso_potencia": aviso_potencia,
+    }
+
 
 # ─── Pydantic models for dimensioning response ───────────────────────────
 

@@ -70,11 +70,13 @@ export default function CircuitosPanel({
   onCircuitoApagado,
   onComponenteAtualizado,
   onConexaoAtualizada,
+  onRefreshData,
 }) {
   const [novoCircuitoNome, setNovoCircuitoNome] = useState("");
   const [dimensionamentos, setDimensionamentos] = useState({});
   const [calculating, setCalculating] = useState({});
   const [calculatingAll, setCalculatingAll] = useState(false);
+  const [dividindo, setDividindo] = useState(false);
   const [globalResults, setGlobalResults] = useState(null);
   const toast = useToast();
 
@@ -164,6 +166,36 @@ export default function CircuitosPanel({
       toast.success("Circuito apagado");
     } catch (err) {
       toast.error(`Erro ao apagar circuito: ${err.message}`);
+    }
+  }
+
+  async function dividirCircuitosAutomatico() {
+    setDividindo(true);
+    try {
+      const resultado = await api.dividirCircuitosAutomatico(projectId);
+      if (resultado.total_circuitos_criados === 0) {
+        toast.info(resultado.mensagem || "Nenhum componente por atribuir.");
+        return;
+      }
+      toast.success(`${resultado.total_circuitos_criados} circuitos criados automaticamente`);
+      if (resultado.aviso_potencia) {
+        toast.warning(resultado.aviso_potencia);
+      }
+      // Recarregar componentes + circuitos do backend (circuit_ids foram alterados)
+      if (resultado.total_circuitos_criados > 0) {
+        if (onRefreshData) {
+          await onRefreshData();
+        } else {
+          // Fallback: atualizar estado local com objetos mínimos
+          for (const c of resultado.circuitos) {
+            onCircuitoCriado?.(c);
+          }
+        }
+      }
+    } catch (err) {
+      toast.error(`Erro na divisão automática: ${err.message}`);
+    } finally {
+      setDividindo(false);
     }
   }
 
@@ -307,8 +339,26 @@ export default function CircuitosPanel({
           ))}
         </div>
 
-        {/* Botão de dimensionamento global */}
+        {/* Botões de ações em lote */}
         <div className="dim-global-section">
+          <button
+            className="btn-dividir-auto"
+            onClick={dividirCircuitosAutomatico}
+            disabled={dividindo}
+            title={`Dividir circuitos (TUG, Iluminação, TUE)
+
+Esta função atribui circuito automaticamente aos componentes que
+AINDA NÃO TÊM circuito definido, seguindo os critérios:
+1. Cargas mono, bi e trifásicas não ficarão no mesmo circuito;
+2. Circuito de iluminação ficará separado dos circuitos de tomadas;
+3. Tomadas de área seca ficarão em circuitos diferentes das tomadas de área molhada;
+4. Cargas acima de 10A ficarão em circuito exclusivo.
+
+Componentes já atribuídos manualmente não são alterados.`}
+          >
+            {dividindo ? "A dividir..." : "🔌 Dividir Circuitos Automaticamente"}
+          </button>
+
           <button
             className="btn-dim-global"
             onClick={dimensionarTodos}

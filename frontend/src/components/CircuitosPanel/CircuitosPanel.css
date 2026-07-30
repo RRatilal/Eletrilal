@@ -309,9 +309,38 @@
   outline: none;
 }
 
-/* ---------- Dimensionamento Global ---------- */
+/* ---------- Dimensionamento Global / Divisão Automática ---------- */
 .circuitos-panel .dim-global-section {
   padding: 0 var(--space-lg) var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.circuitos-panel .btn-dividir-auto {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--color-success, #10b981);
+  border-radius: var(--radius-md);
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--color-success, #10b981);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.circuitos-panel .btn-dividir-auto:hover {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--color-success-hover, #059669);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.2);
+}
+
+.circuitos-panel .btn-dividir-auto:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .circuitos-panel .btn-dim-global {

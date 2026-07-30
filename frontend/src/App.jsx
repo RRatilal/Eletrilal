@@ -271,6 +271,22 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
     toast.success(`✓ Planta importada — ${novasRooms.length} divisões criadas`);
   }
 
+  // ─── Refresh data (após divisão automática de circuitos) ───────────────
+  const handleRefreshData = useCallback(async () => {
+    if (!projeto?.id) return;
+    try {
+      const [novosCircuitos, novosComponentes] = await Promise.all([
+        api.listarCircuitos(projeto.id),
+        api.listarComponentes(projeto.id),
+      ]);
+      setCircuitos(novosCircuitos);
+      setComponentes(novosComponentes);
+    } catch (err) {
+      console.error("Erro ao recarregar dados:", err);
+      toast.error("Erro ao atualizar dados após divisão automática.");
+    }
+  }, [projeto?.id, setCircuitos, setComponentes, toast]);
+
   // ─── Sync Lock ───────────────────────────────────────────────────────────
   useEffect(() => {
     const grupo = canvasRefs?.floorPlanGroupRef?.current;
@@ -373,6 +389,7 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
             onCircuitoCriado={handleCircuitoCriado} onCircuitoAtualizado={handleCircuitoAtualizado}
             onCircuitoApagado={handleCircuitoApagado} onComponenteAtualizado={handleComponenteAtualizado}
             onConexaoAtualizada={handleConexaoAtualizada}
+            onRefreshData={handleRefreshData}
           />
           <PropertiesPanel
             aberto={painelDireitoAberto && electricalData !== null && electricalData.type !== "floorplan" && !activeTool}
