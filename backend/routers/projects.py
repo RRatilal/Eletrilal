@@ -86,6 +86,9 @@ def _compute_dimensioning(circuito, db):
 
     circuitType = _detect_circuit_type(componentes)
 
+    # Usar queda de tensão máxima personalizada do circuito, se definida
+    queda_max = getattr(circuito, 'queda_tensao_max_pct', None)
+
     resultado = calculator.calculateCircuit(
         power_W=potencia_total,
         voltage_V=voltage_V,
@@ -93,6 +96,7 @@ def _compute_dimensioning(circuito, db):
         length_m=comprimento_m,
         temperature_C=temperatura,
         grouping_factor=agrupados,
+        queda_tensao_max_pct=queda_max if queda_max and queda_max > 0 else None,
     )
 
     circuito.disjuntor_amperagem = resultado.breaker_A
@@ -511,6 +515,9 @@ def dimensionar_todos_circuitos(
         circuitType = _detect_circuit_type(componentes)
 
         try:
+            # Usar queda de tensão máxima personalizada do circuito, se definida
+            queda_max = getattr(circuito, 'queda_tensao_max_pct', None)
+
             resultado = calculator.calculateCircuit(
                 power_W=potencia_total,
                 voltage_V=voltage_V,
@@ -518,6 +525,7 @@ def dimensionar_todos_circuitos(
                 length_m=comprimento_m,
                 temperature_C=temperatura,
                 grouping_factor=agrupados,
+                queda_tensao_max_pct=queda_max if queda_max and queda_max > 0 else None,
             )
 
             circuito.disjuntor_amperagem = resultado.breaker_A

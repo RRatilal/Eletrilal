@@ -133,6 +133,7 @@ def calculateCircuit(
     temperature_C: float = 30.0,
     grouping_factor: int = 1,
     cos_phi: float = 0.95,
+    queda_tensao_max_pct: float = None,
 ) -> CircuitResult:
     """
     Size an electrical circuit per IEC 60364 / NBR 5410 / RTIEBT.
@@ -143,7 +144,7 @@ def calculateCircuit(
         C. Choose commercial breaker >= Ib * SAFETY_FACTOR_RTIEBT (In)
         D. Cable capacity Iz (Method B1/B2 RTIEBT)
         E. Effective Iz = Iz × FCA × FCT > In
-        F. Voltage drop: (2·L·I·cosφ) / (56·S) ≤ 3% (lighting) or 5% (other)
+        F. Voltage drop: (2·L·I·cosφ) / (56·S) ≤ max_queda_pct or 3% (lighting) / 5% (other)
     """
     warnings: List[str] = []
 
@@ -215,9 +216,12 @@ def calculateCircuit(
         cos_phi=cos_phi,
     )
 
-    # RTIEBT: queda de tensão máxima admissível — 3% para iluminação,
-    # 5% para os restantes usos (tomadas, circuitos dedicados).
-    max_voltage_drop_pct = 3.0 if circuitType == "lighting" else 5.0
+    # RTIEBT: queda de tensão máxima admissível — usa o valor do circuito
+    # (queda_tensao_max_pct) se fornecido, senão 3% iluminação / 5% outros.
+    if queda_tensao_max_pct is not None and queda_tensao_max_pct > 0:
+        max_voltage_drop_pct = queda_tensao_max_pct
+    else:
+        max_voltage_drop_pct = 3.0 if circuitType == "lighting" else 5.0
 
     while voltage_drop > max_voltage_drop_pct:
         current_idx = None
