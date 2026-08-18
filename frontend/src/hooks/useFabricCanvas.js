@@ -19,7 +19,7 @@ import {
   getPerpendicularSnapAngle,
   queryWallLinesGrid,
 } from "./useMagneticSnap";
-import { drawDynamicGrid, drawDxfGeometry } from "./useDxfRenderer";
+import { drawDynamicGrid, drawDxfGeometry, drawFiacaoTicks } from "./useDxfRenderer";
 import { useFloorPlanRenderer } from "./useFloorPlanRenderer";
 
 // Re-exportar constantes e utilitários para compatibilidade
@@ -39,6 +39,8 @@ export function useFabricCanvas(canvasElRef, containerRef) {
   const spaceHeldRef = useRef(false);
   const lastPointerRef = useRef({ x: 0, y: 0 });
   const gridVisibleRef = useRef(true);
+  const fiacaoRef = useRef(null);          // dados de /eletrodutos/fiacao, indexados por connection_id
+  const fiacaoVisivelRef = useRef(false);  // toggle de visibilidade da fiação
 
   // Refs partilhados com sub-hooks
   const geometriaRef = useRef(null);
@@ -79,12 +81,15 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     const canvas = new fabric.Canvas(canvasElRef.current, {
       backgroundColor: getCanvasBg(),
       selection: true,
-      selectionColor: "rgba(99, 102, 241, 0.15)",
-      selectionBorderColor: "rgba(99, 102, 241, 0.6)",
+      selectionColor: "rgba(255, 166, 43, 0.16)",
+      selectionBorderColor: "rgba(255, 166, 43, 0.65)",
       selectionLineWidth: 1,
+      selectionKey: ["shiftKey", "ctrlKey", "metaKey"],
       fireRightClick: true,
       stopContextMenu: true,
+      preserveObjectStacking: true,
     });
+
     fabricCanvasRef.current = canvas;
 
     // Resize
@@ -98,10 +103,11 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     resize();
     window.addEventListener("resize", resize);
 
-    // After render: grid + DXF geometry
+    // After render: grid + DXF geometry + fiação dos eletrodutos
     canvas.on("after:render", () => {
       drawDynamicGrid(canvas, gridVisibleRef);
       drawDxfGeometry(canvas, geometriaRef, floorPlanGroupRef, floorPlanClipRectRef);
+      drawFiacaoTicks(canvas, fiacaoRef, fiacaoVisivelRef);
     });
 
     // Zoom (scroll)
@@ -270,6 +276,31 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     fabricCanvasRef.current?.requestRenderAll();
   }, [fabricCanvasRef]);
 
+  // ─── Fiação dos eletrodutos (chicote de condutores) ─────────────────────
+  const carregarFiacao = useCallback(async (projectId, apiClient) => {
+    try {
+      const resultado = await apiClient.obterFiacaoEletrodutos(projectId);
+      const porConexao = {};
+      resultado.eletrodutos.forEach((e) => {
+        porConexao[e.connection_id] = e;
+      });
+      fiacaoRef.current = porConexao;
+      fiacaoVisivelRef.current = true;
+      fabricCanvasRef.current?.requestRenderAll();
+      return true;
+    } catch (err) {
+      fiacaoRef.current = null;
+      fiacaoVisivelRef.current = false;
+      fabricCanvasRef.current?.requestRenderAll();
+      return false;
+    }
+  }, [fabricCanvasRef]);
+
+  const ocultarFiacao = useCallback(() => {
+    fiacaoVisivelRef.current = false;
+    fabricCanvasRef.current?.requestRenderAll();
+  }, [fabricCanvasRef]);
+
   // ─── Limpar (delega para useFloorPlanRenderer) ──────────────────────────
   const limpar = useCallback(() => {
     limparRenderer();
@@ -288,6 +319,8 @@ export function useFabricCanvas(canvasElRef, containerRef) {
     desenharRoom,
     limpar,
     setGridVisible,
+    carregarFiacao,
+    ocultarFiacao,
     toggleFloorPlanLock,
     exportarPNG,
     geometriaRef,

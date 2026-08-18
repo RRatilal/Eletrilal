@@ -1,19 +1,19 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import "./Canvas3D.css";
 
 // Alturas regulamentares padrão (em metros)
 const ALTURAS = {
   lampada: 2.7, lampada_simples: 2.7, lampada_spot: 2.7,
-  lampada_tubular: 2.7,  lampada_led: 2.7, lampada_led_fita: 2.7, lampada_pendente: 2.5,
-  lampada_arandela: 1.8,
+  lampada_tubular: 2.7, lampada_led: 2.7, lampada_led_fita: 2.7, lampada_pendente: 2.5,
+  lampada_arandela: 1.8, lampada_jardim: 0.2, // LED de jardim: centro do espeto a 20cm do chão
   tomada: 0.3, tomada_baixa: 0.3, tomada_media: 1.1, tomada_alta: 2.0,
   tomada_trifasica: 1.1, tomada_sensor: 1.1, tomada_dupla: 0.3, tomada_tripla: 0.3,
   telefonia: 0.3, dados: 0.3, tv: 1.1, campainha: 2.2, camera: 2.5,
@@ -27,9 +27,9 @@ const ALTURAS = {
 
 const CORES_COMP = {
   lampada: 0xf59e0b, lampada_simples: 0xf59e0b, lampada_arandela: 0xf59e0b,
-  lampada_spot: 0xf59e0b, lampada_tubular: 0xf59e0b,  lampada_led: 0xf59e0b,
+  lampada_spot: 0xf59e0b, lampada_tubular: 0xf59e0b, lampada_led: 0xf59e0b,
   lampada_led_fita: 0xf59e0b,
-  lampada_pendente: 0xf59e0b,
+  lampada_pendente: 0xf59e0b, lampada_jardim: 0xfbbf24, // âmbar quente de jardim
   tomada: 0x3b82f6, tomada_baixa: 0x3b82f6, tomada_media: 0x3b82f6,
   tomada_alta: 0x3b82f6, tomada_trifasica: 0x3b82f6, tomada_sensor: 0x3b82f6,
   tomada_dupla: 0x3b82f6, tomada_tripla: 0x3b82f6,
@@ -67,9 +67,35 @@ function getGlowTexture() {
   return glowTextureCache;
 }
 
+// ─── Helper: Textura de pontos LED discretos para fita LED ─────────────────
+let ledStripTextureCache = null;
+function getLedStripTexture() {
+  if (ledStripTextureCache) return ledStripTextureCache;
+  const canvas = document.createElement("canvas");
+  canvas.width = 16;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, 16, 64);
+  // Gradiente radial: ponto LED brilhante no centro do tile
+  const grad = ctx.createRadialGradient(8, 32, 0, 8, 32, 6);
+  grad.addColorStop(0.0, "rgba(255, 253, 220, 1.0)");
+  grad.addColorStop(0.3, "rgba(255, 240, 150, 0.8)");
+  grad.addColorStop(0.6, "rgba(255, 220, 80, 0.3)");
+  grad.addColorStop(1.0, "rgba(255, 220, 80, 0.0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 16, 64);
+  ledStripTextureCache = new THREE.CanvasTexture(canvas);
+  ledStripTextureCache.wrapS = THREE.RepeatWrapping;
+  ledStripTextureCache.wrapT = THREE.RepeatWrapping;
+  ledStripTextureCache.flipY = false;
+  return ledStripTextureCache;
+}
+
 // ─── Helper: obter geometria e metadados de um componente ─────────────────────
-function getComponentGeometry(c) {
-  const yAlt = ALTURAS[c.tipo] || ALTURAS.outro;
+function getComponentGeometry(c, overrideY) {
+  const baseAlt = ALTURAS[c.tipo] || ALTURAS.outro;
+  // Para lampada_pendente, overrideY é a altura do TETO (não a posição da lâmpada)
+  const yAlt = (c.tipo === "lampada_pendente") ? baseAlt : (overrideY != null ? overrideY : baseAlt);
   const cor = CORES_COMP[c.tipo] || CORES_COMP.outro;
   let geom = null;
   let extraMesh = null;
@@ -82,7 +108,9 @@ function getComponentGeometry(c) {
       geom = new THREE.BoxGeometry(0.5, 0.01, 0.02);
     } else if (c.tipo === "lampada_pendente") {
       geom = new THREE.CylinderGeometry(0.08, 0.08, 0.06, 16);
-      const alturaCabo = 2.7 - yAlt;
+      // O cabo desce do teto até à lâmpada pendente
+      const tectoAltura = overrideY != null ? overrideY : 2.7;
+      const alturaCabo = tectoAltura - yAlt;
       if (alturaCabo > 0) {
         const caboGeom = new THREE.CylinderGeometry(0.003, 0.003, alturaCabo, 8);
         const caboMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
@@ -98,6 +126,23 @@ function getComponentGeometry(c) {
       extraMesh.position.set(c.x - 0.04, yAlt, c.y);
     } else if (c.tipo === "lampada_spot") {
       geom = new THREE.CylinderGeometry(0.05, 0.05, 0.01, 16);
+    } else if (c.tipo === "lampada_jardim") {
+      // LED de jardim: espeto fino no chão (0 → 0.3m) + cabeça cónica a apontar para cima
+      // Geometria centrada para o mesh ser colocado a yFinal=0.2 (centro do conjunto)
+      const spikeGeom = new THREE.CylinderGeometry(0.008, 0.014, 0.3, 6);
+      spikeGeom.translate(0, -0.05, 0); // base do espeto em y=0 (chão), topo em 0.3
+      const headGeom = new THREE.ConeGeometry(0.045, 0.12, 8);
+      headGeom.translate(0, 0.16, 0); // cabeça cónica: 0.3 → 0.42, a apontar para cima
+      const mergedGeom = mergeGeometries([spikeGeom, headGeom]);
+      if (mergedGeom) {
+        geom = mergedGeom;
+        spikeGeom.dispose();
+        headGeom.dispose();
+      } else {
+        // Fallback (raro): usar apenas o espeto e libertar a cabeça não usada
+        geom = spikeGeom;
+        headGeom.dispose();
+      }
     } else if (c.tipo === "lampada_led_fita") {
       // Fita LED: sem geometria fixa, renderizada como polyline 3D
       geom = null;
@@ -229,6 +274,21 @@ function disposeScene(scene) {
   scene.traverse(obj => disposeObject(obj));
 }
 
+// Helper de distância ponto a segmento de reta (ao quadrado) para colisão de paredes
+const pointToSegmentDistSq = (px, pz, x1, z1, x2, z2) => {
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const l2 = dx * dx + dz * dz;
+  if (l2 === 0) return (px - x1) * (px - x1) + (pz - z1) * (pz - z1);
+  let t = ((px - x1) * dx + (pz - z1) * dz) / l2;
+  t = Math.max(0, Math.min(1, t));
+  const projX = x1 + t * dx;
+  const projZ = z1 + t * dz;
+  const distX = px - projX;
+  const distZ = pz - projZ;
+  return distX * distX + distZ * distZ;
+};
+
 export default function Canvas3D({
   geometria, componentes, conexoes, circuitos = [], rooms = [], onClose,
 }) {
@@ -240,12 +300,37 @@ export default function Canvas3D({
     document.documentElement.getAttribute("data-theme") === "light" ? "dia" : "noite"
   );
 
+  // ─── Estado de Navegação (Orbital vs 1ª Pessoa) ──────────────────────────
+  const [modoNavegacao, setModoNavegacao] = useState("orbit"); // "orbit" | "firstPerson"
+  const [isLocked, setIsLocked] = useState(false);
+  const modoNavegacaoRef = useRef("orbit");
+  modoNavegacaoRef.current = modoNavegacao;
+
+  const fpsControlsRef = useRef(null);
+  const keysPressedRef = useRef({});
+  const wallsRef = useRef([]); // Lista de paredes para colisão em 1ª pessoa
+  const floorMinXRef = useRef(Infinity);
+  const floorMaxXRef = useRef(-Infinity);
+  const floorMinZRef = useRef(Infinity);
+  const floorMaxZRef = useRef(-Infinity);
+  const lastFrameTimeRef = useRef(performance.now());
+
+  // ─── Estado do Teto 3D ──────────────────────────────────────────────────
+  const [tetoVisivel, setTetoVisivel] = useState(true);
+  const [tetoOpacidade, setTetoOpacidade] = useState(0.3);
+  const tetoOpacidadeRef = useRef(0.3);
+  const tetoMeshesRef = useRef([]);
+  const tetoMatRef = useRef(null);   // material partilhado para todas as placas de teto
+  const [alturasPorRoom, setAlturasPorRoom] = useState({});
+  const [alturasPorCamada, setAlturasPorCamada] = useState({});
+
   // Refs para objetos Three.js que precisam de disposal
   const sceneObjectsRef = useRef([]);
   const geometriesRef = useRef([]);
   const materialsRef = useRef([]);
   const conduitMeshesRef = useRef([]);  // Meshes de condutos para controlo de visibilidade
   const extraMeshesRef = useRef([]);
+  const wallOpacityRef = useRef(0.3);  // Espelho do wallOpacity para evitar stale closure
 
   // Refs para o loop de render
   const rendererRef = useRef(null);
@@ -263,59 +348,162 @@ export default function Canvas3D({
   const origMatsRef = useRef({});
   const darkMatRef = useRef(new THREE.MeshBasicMaterial({ color: 0x000000 }));
 
-  // ─── Render on Demand ─────────────────────────────────────────────────────
+  // ─── Vetores pré-alocados para evitar GC pressure no updateFirstPersonMovement ──
+  const fpsDirVecRef = useRef(new THREE.Vector3());
+  const fpsRightVecRef = useRef(new THREE.Vector3());
+  const fpsMoveVecRef = useRef(new THREE.Vector3());
+  const fpsUpVecRef = useRef(new THREE.Vector3(0, 1, 0));
+  // Cor preta reutilizável para o fundo do bloom (evita new Color por frame)
+  const bloomBlackBgRef = useRef(new THREE.Color(0x000000));
+  // ─── Bloom seletivo otimizado: pré-classificação de meshes ────────────────
+  const nonBloomMeshesRef = useRef([]);   // Meshes sem bloom layer (para swap rápido)
+  const hasBloomObjectsRef = useRef(false); // Flag: há objetos com bloom?
+  // ─── PointLights dinâmicas por distância à câmara (max 12) ──────────────
+  const lampStateMapRef = useRef(new Map()); // Mapa lampId → { pointLight, isOn, hasPower, ... }
+  const updatePointLightsByDistanceRef = useRef(null); // Callback p/ renderLoop
+  let lastPointLightUpdate = 0;
+
+  // ─── Lógica de Movimento em 1ª Pessoa com Colisão ─────────────────────────
+  const updateFirstPersonMovement = useCallback((delta) => {
+    const camera = cameraRef.current;
+    if (!camera) return;
+
+    const keys = keysPressedRef.current;
+    const moveFwd = keys["KeyW"] || keys["w"] || keys["W"] || keys["ArrowUp"];
+    const moveBwd = keys["KeyS"] || keys["s"] || keys["S"] || keys["ArrowDown"];
+    const moveLeft = keys["KeyA"] || keys["a"] || keys["A"] || keys["ArrowLeft"];
+    const moveRight = keys["KeyD"] || keys["d"] || keys["D"] || keys["ArrowRight"];
+
+    if (!moveFwd && !moveBwd && !moveLeft && !moveRight) return;
+
+    const speed = 4.0; // metros por segundo
+    // Reutilizar vetores pré-alocados (evita ~240 alocações/s em FPS a 60fps)
+    const dir = fpsDirVecRef.current;
+    camera.getWorldDirection(dir);
+    dir.y = 0; // movimento no plano XZ
+    if (dir.lengthSq() > 0) dir.normalize();
+
+    const right = fpsRightVecRef.current;
+    right.crossVectors(dir, fpsUpVecRef.current).normalize();
+
+    const moveVec = fpsMoveVecRef.current.set(0, 0, 0);
+    if (moveFwd) moveVec.add(dir);
+    if (moveBwd) moveVec.sub(dir);
+    if (moveLeft) moveVec.sub(right);
+    if (moveRight) moveVec.add(right);
+
+    if (moveVec.lengthSq() === 0) return;
+    moveVec.normalize().multiplyScalar(speed * delta);
+
+    const radius = 0.35; // raio de colisão do corpo (35 cm)
+    const radiusSq = radius * radius;
+    const walls = wallsRef.current;
+
+    // Testar movimento no eixo X com colisão
+    const tryX = camera.position.x + moveVec.x;
+    let collideX = false;
+    for (let i = 0; i < walls.length; i++) {
+      const w = walls[i];
+      if (pointToSegmentDistSq(tryX, camera.position.z, w.x1, w.z1, w.x2, w.z2) < radiusSq) {
+        collideX = true;
+        break;
+      }
+    }
+    if (!collideX) {
+      camera.position.x = tryX;
+    }
+
+    // Testar movimento no eixo Z com colisão
+    const tryZ = camera.position.z + moveVec.z;
+    let collideZ = false;
+    for (let i = 0; i < walls.length; i++) {
+      const w = walls[i];
+      if (pointToSegmentDistSq(camera.position.x, tryZ, w.x1, w.z1, w.x2, w.z2) < radiusSq) {
+        collideZ = true;
+        break;
+      }
+    }
+    if (!collideZ) {
+      camera.position.z = tryZ;
+    }
+
+    // Fixar altura dos olhos a 1.65m do chão
+    camera.position.y = 1.65;
+  }, []);
+
+  // ─── Render on Demand & Frame Loop ───────────────────────────────────────
   const requestRender = useCallback(() => {
     needsRenderRef.current = true;
     if (!animFrameIdRef.current && !isDisposedRef.current) {
       animFrameIdRef.current = requestAnimationFrame(function renderLoop() {
         animFrameIdRef.current = null;
         if (isDisposedRef.current) return;
-        if (needsRenderRef.current) {
-          controlsRef.current?.update();
 
-          // Selective bloom: escurecer objetos sem bloom, renderizar bloom, restaurar, compor final
+        const now = performance.now();
+        const delta = Math.min(0.1, (now - (lastFrameTimeRef.current || now)) / 1000);
+        lastFrameTimeRef.current = now;
+
+        if (modoNavegacaoRef.current === "firstPerson") {
+          updateFirstPersonMovement(delta);
+          needsRenderRef.current = true;
+        } else {
+          controlsRef.current?.update();
+        }
+
+        // Gerir PointLights por distância (a cada 0.5s, só as 12 mais próximas)
+        updatePointLightsByDistanceRef.current?.();
+
+        if (needsRenderRef.current) {
           const bScene = sceneRef.current;
           const bloomC = bloomComposerRef.current;
           const finalC = finalComposerRef.current;
           const blendPass = bloomBlendPassRef.current;
+          const hasBloom = hasBloomObjectsRef.current;
 
-          if (bloomC && finalC && blendPass) {
-            // 1. Guardar background original e escurecer
+          // Em 1ª pessoa: saltar bloom e usar renderização direta (performance > efeito visual)
+          const isFPS = modoNavegacaoRef.current === "firstPerson";
+          if (!isFPS && hasBloom && bloomC && finalC && blendPass) {
+            // 1. Guardar background original e escurecer meshes não-bloom (pré-classificados)
             const origBg = bScene.background;
-            bScene.background = new THREE.Color(0x000000);
+            bScene.background = bloomBlackBgRef.current;
             const mats = origMatsRef.current;
             const darkMat = darkMatRef.current;
-            bScene.traverse((obj) => {
-              if (obj.isMesh && !obj.layers.test(BLOOM_LAYER)) {
-                mats[obj.uuid] = obj.material;
-                obj.material = darkMat;
-              }
-            });
+            const nonBloom = nonBloomMeshesRef.current;
+            for (let i = 0; i < nonBloom.length; i++) {
+              const obj = nonBloom[i];
+              mats[obj.uuid] = obj.material;
+              obj.material = darkMat;
+            }
 
-            // 2. Renderizar bloom (só objetos no bloom layer ficam brilhantes → só eles bloomam)
+            // 2. Renderizar bloom (a 50% resolução)
             bloomC.render();
 
             // 3. Restaurar materiais e background
             bScene.background = origBg;
-            bScene.traverse((obj) => {
-              if (mats[obj.uuid]) {
-                obj.material = mats[obj.uuid];
-                delete mats[obj.uuid];
-              }
-            });
+            for (let i = 0; i < nonBloom.length; i++) {
+              const obj = nonBloom[i];
+              obj.material = mats[obj.uuid];
+            }
+            // Limpar o map de materiais
+            origMatsRef.current = {};
 
             // 4. Compor final (cena normal + bloom sobreposto)
             blendPass.uniforms.bloomTexture.value = bloomC.renderTarget2.texture;
             finalC.render();
           } else {
+            // Renderização direta (sem bloom): 1 único render
             rendererRef.current?.render(bScene, cameraRef.current);
           }
 
           needsRenderRef.current = false;
         }
+
+        if (modoNavegacaoRef.current === "firstPerson" && !isDisposedRef.current) {
+          animFrameIdRef.current = requestAnimationFrame(renderLoop);
+        }
       });
     }
-  }, []);
+  }, [updateFirstPersonMovement]);
 
   // Inicializar configurações de camadas DXF automáticas
   useEffect(() => {
@@ -333,6 +521,8 @@ export default function Canvas3D({
           }
         } else if (name.includes("door") || name.includes("port") || name.includes("vao") || name.includes("soleira")) {
           initialConfigs[camada] = "porta";
+        } else if (name.includes("teto") || name.includes("forro") || name.includes("ceiling") || name.includes("rcp") || name.includes("plafond")) {
+          initialConfigs[camada] = "teto";
         } else {
           initialConfigs[camada] = "mobiliario";
         }
@@ -351,6 +541,10 @@ export default function Canvas3D({
     if (geometria && Object.keys(layerConfigs).length === 0) return;
 
     isDisposedRef.current = false;
+    // Resetar refs de tracking para rebuild de cena
+    lampStateMapRef.current = new Map();
+    nonBloomMeshesRef.current = [];
+    hasBloomObjectsRef.current = false;
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight;
     const isDia = modoDiaNoite === "dia";
@@ -363,19 +557,23 @@ export default function Canvas3D({
     const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true });
+    const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: false });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.enabled = false;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     rendererRef.current = renderer;
 
     // ─── Selective Bloom: dois compositors (bloom + final) ──────────────────
+    // Bloom a 50% da resolução nativa (efeito difuso não precisa de detalhe total)
+    const bloomW = Math.floor(width * 0.5);
+    const bloomH = Math.floor(height * 0.5);
     const bloomC = new EffectComposer(renderer);
     bloomC.addPass(new RenderPass(scene, camera));
     bloomC.addPass(new UnrealBloomPass(
-      new THREE.Vector2(width, height), 1.2, 0.3, 0.9
+      new THREE.Vector2(bloomW, bloomH), 1.2, 0.3, 0.9
     ));
+    bloomC.setSize(bloomW, bloomH);
     bloomComposerRef.current = bloomC;
 
     const finalC = new EffectComposer(renderer);
@@ -406,17 +604,60 @@ export default function Canvas3D({
     });
     const blendPass = new ShaderPass(blendMat);
     finalC.addPass(blendPass);
-    finalC.addPass(new OutputPass());
+    // OutputPass removido: tone mapping desnecessário para visualização 3D (poupa GPU)
     finalComposerRef.current = finalC;
     bloomBlendPassRef.current = blendPass;
 
-    // 2. Controlos da Câmara
+    // 2. Controlos da Câmara (Orbital + 1ª Pessoa)
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.maxPolarAngle = Math.PI / 2 - 0.01;
     controls.addEventListener("change", () => requestRender());
     controlsRef.current = controls;
+
+    const fpsControls = new PointerLockControls(camera, renderer.domElement);
+    fpsControlsRef.current = fpsControls;
+
+    fpsControls.addEventListener("lock", () => {
+      setIsLocked(true);
+      requestRender();
+    });
+    fpsControls.addEventListener("unlock", () => {
+      setIsLocked(false);
+      requestRender();
+    });
+    fpsControls.addEventListener("change", () => {
+      requestRender();
+    });
+
+    const handleKeyDown = (e) => {
+      if (modoNavegacaoRef.current !== "firstPerson") return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+      keysPressedRef.current[e.code] = true;
+      keysPressedRef.current[e.key] = true;
+      if (e.key) keysPressedRef.current[e.key.toLowerCase()] = true;
+      requestRender();
+    };
+
+    const handleKeyUp = (e) => {
+      if (modoNavegacaoRef.current !== "firstPerson") return;
+      keysPressedRef.current[e.code] = false;
+      keysPressedRef.current[e.key] = false;
+      if (e.key) keysPressedRef.current[e.key.toLowerCase()] = false;
+    };
+
+    const handleCanvasClick = (e) => {
+      if (modoNavegacaoRef.current === "firstPerson" && fpsControlsRef.current && !fpsControlsRef.current.isLocked) {
+        if (e.target.closest && e.target.closest(".canvas3d-card")) return;
+        fpsControlsRef.current.lock();
+      }
+    };
+
+    const domElem = renderer.domElement;
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    domElem.addEventListener("click", handleCanvasClick);
 
     // 3. Luzes (Dia vs Noite)
     const ambColor = isDia ? 0xffffff : 0x38bdf8;
@@ -501,8 +742,8 @@ export default function Canvas3D({
     // 5. Grelha
     const gridCenterColor = isDia ? 0x94a3b8 : 0x4b5563;
     const gridLineColor = isDia ? 0xcbd5e1 : 0x1f2937;
-    const gridDivisions = Math.min(100, Math.max(20, Math.ceil(maxDim * 3)));
-    const gridHelper = new THREE.GridHelper(200, gridDivisions, gridCenterColor, gridLineColor);
+    const gridDivisions = Math.min(40, Math.max(10, Math.ceil(maxDim)));
+    const gridHelper = new THREE.GridHelper(Math.max(maxDim * 1.5, 20), gridDivisions, gridCenterColor, gridLineColor);
     gridHelper.position.set(centerX, -0.05, centerZ);
     scene.add(gridHelper);
     sceneObjectsRef.current.push(gridHelper);
@@ -510,6 +751,36 @@ export default function Canvas3D({
     // ─── Recolher materiais para controlo de opacidade ──────────────────────
     const trackedMaterials = [];
     materialsRef.current = trackedMaterials;
+
+    // Variáveis de teto DXF e paredes (preenchidas dentro do bloco geometria, usadas na secção 7b)
+    const tetoLinePoints = [];
+    const wallsToCreate = [];
+    let floorMinX = Infinity, floorMaxX = -Infinity, floorMinZ = Infinity, floorMaxZ = -Infinity;
+    let tetoMinX = Infinity, tetoMaxX = -Infinity, tetoMinZ = Infinity, tetoMaxZ = -Infinity;
+    let hasTetoLines = false;
+    let tetoOffsetX = 0, tetoOffsetZ = 0;
+    let maxWallHeight = 2.8;
+    // Helpers para pé-direito e divisão por coordenada
+    const altParede_teto = 2.8; // altura padrão do pé-direito
+    const getAltTeto = (roomId) => (alturasPorRoom && alturasPorRoom[roomId]) || altParede_teto;
+
+    const getRoomParaComponente = (cx, cy) => {
+      for (const room of (rooms || [])) {
+        try {
+          const geojson = JSON.parse(room.poligono_geojson);
+          if (!geojson.coordinates || !geojson.coordinates[0]) continue;
+          const coords = geojson.coordinates[0];
+          const rx0 = coords[0][0], ry0 = coords[0][1];
+          const rx1 = coords[2][0], ry1 = coords[2][1];
+          const rMinX = Math.min(rx0, rx1), rMaxX = Math.max(rx0, rx1);
+          const rMinY = Math.min(ry0, ry1), rMaxY = Math.max(ry0, ry1);
+          if (cx >= rMinX && cx <= rMaxX && cy >= rMinY && cy <= rMaxY) {
+            return room;
+          }
+        } catch { }
+      }
+      return null;
+    };
 
     // ─── 6. Geometria DXF ───────────────────────────────────────────────────
     if (geometria) {
@@ -519,7 +790,7 @@ export default function Canvas3D({
 
       const dxfWallMat = new THREE.MeshStandardMaterial({
         color: 0x7f8c8d, roughness: 0.9, metalness: 0.0,
-        transparent: true, opacity: wallOpacity, side: THREE.DoubleSide,
+        transparent: true, opacity: wallOpacityRef.current, side: THREE.DoubleSide,
       });
       trackedMaterials.push(dxfWallMat);
 
@@ -584,24 +855,136 @@ export default function Canvas3D({
         }
       }
 
-      const wallsToCreate = [], sillsToCreate = [], headersToCreate = [], glassesToCreate = [];
+      const sillsToCreate = [], headersToCreate = [], glassesToCreate = [];
+
+      // ─── Detecção automática de planta de teto (cluster espacial) ──────────
+      // Detectar se a geometria DXF contém dois clusters separados por um gap
+      // (ex: planta principal + planta de teto lado a lado no DXF)
+      const isCeilingLine = new Array(linesForAnalysis.length).fill(false);
+
+      if (linesForAnalysis.length > 50) {
+        // Calcular midpoints em X de todas as linhas
+        const midXvals = linesForAnalysis.map((l) => (l.x1 + l.x2) / 2);
+        const midZvals = linesForAnalysis.map((l) => (-l.y1 + -l.y2) / 2);
+        const sortedIndicesX = midXvals.map((v, i) => i).sort((a, b) => midXvals[a] - midXvals[b]);
+
+        // Encontrar o maior gap em X
+        let maxGapX = 0, gapSplitX = 0;
+        for (let i = 1; i < sortedIndicesX.length; i++) {
+          const gap = midXvals[sortedIndicesX[i]] - midXvals[sortedIndicesX[i - 1]];
+          if (gap > maxGapX) {
+            maxGapX = gap;
+            gapSplitX = (midXvals[sortedIndicesX[i]] + midXvals[sortedIndicesX[i - 1]]) / 2;
+          }
+        }
+
+        // Encontrar o maior gap em Z (Y invertido)
+        const sortedIndicesZ = midZvals.map((v, i) => i).sort((a, b) => midZvals[a] - midZvals[b]);
+        let maxGapZ = 0, gapSplitZ = 0;
+        for (let i = 1; i < sortedIndicesZ.length; i++) {
+          const gap = midZvals[sortedIndicesZ[i]] - midZvals[sortedIndicesZ[i - 1]];
+          if (gap > maxGapZ) {
+            maxGapZ = gap;
+            gapSplitZ = (midZvals[sortedIndicesZ[i]] + midZvals[sortedIndicesZ[i - 1]]) / 2;
+          }
+        }
+
+        // Usar o maior gap entre X e Z, se for significativo (> 20% da dimensão total)
+        const rangeX = Math.max(...midXvals) - Math.min(...midXvals);
+        const rangeZ = Math.max(...midZvals) - Math.min(...midZvals);
+        const useX = maxGapX >= maxGapZ;
+        const maxGap = useX ? maxGapX : maxGapZ;
+        const gapSplit = useX ? gapSplitX : gapSplitZ;
+        const range = useX ? rangeX : rangeZ;
+
+        if (maxGap > range * 0.08 && maxGap > 1.0) {
+          // Há dois clusters separados — determinar qual tem os componentes/rooms (planta principal)
+          const midVals = useX ? midXvals : midZvals;
+
+          // Contar entidades de cada lado
+          let leftCount = 0, rightCount = 0;
+          for (let i = 0; i < linesForAnalysis.length; i++) {
+            if (midVals[i] < gapSplit) leftCount++;
+            else rightCount++;
+          }
+
+          // O cluster MENOR é provavelmente a planta de teto
+          // Mas verificar com os componentes/rooms se disponíveis
+          let ceilingIsLeft = leftCount < rightCount;
+
+          if (componentes && componentes.length > 0) {
+            const compMidVal = useX
+              ? componentes.reduce((s, c) => s + c.x, 0) / componentes.length
+              : componentes.reduce((s, c) => s + (-c.y), 0) / componentes.length;
+            // Componentes estão do lado da planta principal (oposto ao teto)
+            ceilingIsLeft = compMidVal >= gapSplit;
+          }
+
+          if (rooms.length > 0) {
+            let roomMidSum = 0;
+            rooms.forEach((r) => {
+              try {
+                const geojson = JSON.parse(r.poligono_geojson);
+                const coords = geojson.coordinates[0];
+                if (useX) roomMidSum += (coords[0][0] + coords[2][0]) / 2;
+                else roomMidSum += (-coords[0][1] + -coords[2][1]) / 2;
+              } catch { }
+            });
+            const roomMidVal = roomMidSum / rooms.length;
+            ceilingIsLeft = roomMidVal >= gapSplit;
+          }
+
+          // Marcar linhas do cluster teto
+          for (let i = 0; i < linesForAnalysis.length; i++) {
+            const isCeilingCluster = ceilingIsLeft
+              ? midVals[i] < gapSplit
+              : midVals[i] >= gapSplit;
+            if (isCeilingCluster) {
+              isCeilingLine[i] = true;
+            }
+          }
+
+          console.log(`[Canvas3D] Planta de teto detectada: ${isCeilingLine.filter(Boolean).length} linhas (gap=${maxGap.toFixed(0)} em ${useX ? 'X' : 'Z'})`);
+        }
+      }
 
       linesForAnalysis.forEach((l, index) => {
         const z1 = -l.y1;
         const z2 = -l.y2;
+
+        const layer = l.layer;
+        const config = layer ? (layerConfigs[layer] || "mobiliario") : "mobiliario";
+
+        // Linhas da planta de teto (por classificação de camada OU detecção espacial)
+        if (config === "teto" || isCeilingLine[index]) {
+          tetoLinePoints.push({ x1: l.x1, z1, x2: l.x2, z2 });
+          tetoMinX = Math.min(tetoMinX, l.x1, l.x2);
+          tetoMaxX = Math.max(tetoMaxX, l.x1, l.x2);
+          tetoMinZ = Math.min(tetoMinZ, z1, z2);
+          tetoMaxZ = Math.max(tetoMaxZ, z1, z2);
+          hasTetoLines = true;
+          return;
+        }
+
+        // Linhas normais (não-teto) — renderizar no chão e processar para paredes/janelas
         linePoints.push(new THREE.Vector3(l.x1, 0.01, z1));
         linePoints.push(new THREE.Vector3(l.x2, 0.01, z2));
 
-        const layer = l.layer;
-        if (!layer) return;
-        const config = layerConfigs[layer] || "mobiliario";
-        if (config === "mobiliario") return;
+        // Actualizar bounding box da planta principal (para calcular offset)
+        if (config === "parede" || config === "janela" || config === "porta") {
+          floorMinX = Math.min(floorMinX, l.x1, l.x2);
+          floorMaxX = Math.max(floorMaxX, l.x1, l.x2);
+          floorMinZ = Math.min(floorMinZ, z1, z2);
+          floorMaxZ = Math.max(floorMaxZ, z1, z2);
+        }
 
+        if (!layer) return;
+        if (config === "mobiliario") return;
         const dx = l.x2 - l.x1, dz = z2 - z1;
         const len = Math.sqrt(dx * dx + dz * dz);
         if (len < 0.15) return;
         const angle = Math.atan2(dz, dx);
-        const lineItem = { x1: l.x1, z1, x2: l.x2, z2, len, dx, dz, angle };
+        const lineItem = { x1: l.x1, z1, x2: l.x2, z2, len, dx, dz, angle, layer: l.layer };
 
         if (config === "parede") {
           wallsToCreate.push(lineItem);
@@ -612,7 +995,17 @@ export default function Canvas3D({
         }
       });
 
-      // D. Paredes em InstancedMesh
+      // Calcular offset para alinhar a planta de teto com a planta principal
+      if (hasTetoLines && floorMinX !== Infinity) {
+        const floorCX = (floorMinX + floorMaxX) / 2;
+        const floorCZ = (floorMinZ + floorMaxZ) / 2;
+        const tetoCX = (tetoMinX + tetoMaxX) / 2;
+        const tetoCZ = (tetoMinZ + tetoMaxZ) / 2;
+        tetoOffsetX = floorCX - tetoCX;
+        tetoOffsetZ = floorCZ - tetoCZ;
+      }
+
+      // D. Paredes em InstancedMesh (com altura dinâmica por camada DXF ou por divisão)
       if (wallsToCreate.length > 0) {
         const baseGeom = new THREE.BoxGeometry(1, 1, 1);
         geometriesRef.current.push(baseGeom);
@@ -622,17 +1015,25 @@ export default function Canvas3D({
         const yAxis = new THREE.Vector3(0, 1, 0);
 
         wallsToCreate.forEach((w, idx) => {
-          tempPos.set((w.x1 + w.x2) / 2, altParede / 2, (w.z1 + w.z2) / 2);
+          const midX = (w.x1 + w.x2) / 2;
+          const midZ = (w.z1 + w.z2) / 2;
+          const room = getRoomParaComponente(midX, -midZ);
+          const customLayerH = w.layer ? alturasPorCamada[w.layer] : null;
+          const hWall = customLayerH != null ? customLayerH : (room ? getAltTeto(room.id) : altParede);
+          if (hWall > maxWallHeight) maxWallHeight = hWall;
+
+          tempPos.set(midX, hWall / 2, midZ);
           tempRot.setFromAxisAngle(yAxis, -w.angle);
-          tempScale.set(w.len, altParede, espessura);
+          tempScale.set(w.len, hWall, espessura);
           tempMatrix.compose(tempPos, tempRot, tempScale);
           instancedMesh.setMatrixAt(idx, tempMatrix);
         });
         scene.add(instancedMesh);
         sceneObjectsRef.current.push(instancedMesh);
+        console.log(`[Canvas3D] Paredes: ${wallsToCreate.length}, altMax=${maxWallHeight.toFixed(2)}m`);
       }
 
-      // E. Peitoris
+      // E. Peitoris (adaptados à altura da parede da divisão)
       if (sillsToCreate.length > 0) {
         const baseGeom = new THREE.BoxGeometry(1, 1, 1);
         geometriesRef.current.push(baseGeom);
@@ -642,9 +1043,15 @@ export default function Canvas3D({
         const yAxis = new THREE.Vector3(0, 1, 0);
 
         sillsToCreate.forEach((w, idx) => {
-          tempPos.set((w.x1 + w.x2) / 2, 0.45, (w.z1 + w.z2) / 2);
+          const midX = (w.x1 + w.x2) / 2;
+          const midZ = (w.z1 + w.z2) / 2;
+          const room = getRoomParaComponente(midX, -midZ);
+          const hWall = room ? getAltTeto(room.id) : 2.8;
+          const sillH = Math.min(0.9, hWall * 0.32);
+
+          tempPos.set(midX, sillH / 2, midZ);
           tempRot.setFromAxisAngle(yAxis, -w.angle);
-          tempScale.set(w.len, 0.9, espessura);
+          tempScale.set(w.len, sillH, espessura);
           tempMatrix.compose(tempPos, tempRot, tempScale);
           instancedSills.setMatrixAt(idx, tempMatrix);
         });
@@ -652,7 +1059,7 @@ export default function Canvas3D({
         sceneObjectsRef.current.push(instancedSills);
       }
 
-      // F. Vergas
+      // F. Vergas (adaptadas à altura da parede da divisão)
       if (headersToCreate.length > 0) {
         const baseGeom = new THREE.BoxGeometry(1, 1, 1);
         geometriesRef.current.push(baseGeom);
@@ -662,9 +1069,16 @@ export default function Canvas3D({
         const yAxis = new THREE.Vector3(0, 1, 0);
 
         headersToCreate.forEach((w, idx) => {
-          tempPos.set((w.x1 + w.x2) / 2, 2.45, (w.z1 + w.z2) / 2);
+          const midX = (w.x1 + w.x2) / 2;
+          const midZ = (w.z1 + w.z2) / 2;
+          const room = getRoomParaComponente(midX, -midZ);
+          const hWall = room ? getAltTeto(room.id) : 2.8;
+          const glassTop = Math.min(2.1, hWall - 0.2);
+          const headerH = Math.max(0.2, hWall - glassTop);
+
+          tempPos.set(midX, glassTop + headerH / 2, midZ);
           tempRot.setFromAxisAngle(yAxis, -w.angle);
-          tempScale.set(w.len, 0.7, espessura);
+          tempScale.set(w.len, headerH, espessura);
           tempMatrix.compose(tempPos, tempRot, tempScale);
           instancedHeaders.setMatrixAt(idx, tempMatrix);
         });
@@ -672,7 +1086,7 @@ export default function Canvas3D({
         sceneObjectsRef.current.push(instancedHeaders);
       }
 
-      // G. Vidros
+      // G. Vidros (adaptados à altura da divisão)
       if (glassesToCreate.length > 0) {
         const baseGeom = new THREE.BoxGeometry(1, 1, 1);
         geometriesRef.current.push(baseGeom);
@@ -682,9 +1096,17 @@ export default function Canvas3D({
         const yAxis = new THREE.Vector3(0, 1, 0);
 
         glassesToCreate.forEach((w, idx) => {
-          tempPos.set((w.x1 + w.x2) / 2, 1.5, (w.z1 + w.z2) / 2);
+          const midX = (w.x1 + w.x2) / 2;
+          const midZ = (w.z1 + w.z2) / 2;
+          const room = getRoomParaComponente(midX, -midZ);
+          const hWall = room ? getAltTeto(room.id) : 2.8;
+          const sillH = Math.min(0.9, hWall * 0.32);
+          const glassTop = Math.min(2.1, hWall - 0.2);
+          const glassH = Math.max(0.5, glassTop - sillH);
+
+          tempPos.set(midX, sillH + glassH / 2, midZ);
           tempRot.setFromAxisAngle(yAxis, -w.angle);
-          tempScale.set(w.len, 1.2, 0.03);
+          tempScale.set(w.len, glassH, 0.03);
           tempMatrix.compose(tempPos, tempRot, tempScale);
           instancedGlasses.setMatrixAt(idx, tempMatrix);
         });
@@ -701,40 +1123,13 @@ export default function Canvas3D({
         scene.add(dxfSegments);
         sceneObjectsRef.current.push(dxfSegments);
       }
-
-      // Círculos
-      if ((geometria.circulos || []).length > 0) {
-        const circleGeoms = [];
-        const matrix = new THREE.Matrix4();
-        (geometria.circulos || []).forEach((c) => {
-          const ringGeom = new THREE.RingGeometry(Math.max(0.001, c.raio - 0.02), c.raio, 16);
-          matrix.makeRotationX(Math.PI / 2);
-          matrix.setPosition(c.cx, 0.015, -c.cy);
-          ringGeom.applyMatrix4(matrix);
-          circleGeoms.push(ringGeom);
-          geometriesRef.current.push(ringGeom);
-        });
-        if (circleGeoms.length > 0) {
-          try {
-            const mergedCircles = mergeGeometries(circleGeoms, false);
-            geometriesRef.current.push(mergedCircles);
-            const circleMat = new THREE.MeshBasicMaterial({ color: 0x4b5563, side: THREE.DoubleSide });
-            trackedMaterials.push(circleMat);
-            const circleMesh = new THREE.Mesh(mergedCircles, circleMat);
-            scene.add(circleMesh);
-            sceneObjectsRef.current.push(circleMesh);
-          } catch (e) {
-            console.warn("Merge de círculos falhou:", e);
-          }
-        }
-      }
     }
 
     // ─── 7. Divisões (Rooms) — Merge Geometries ──────────────────────────────
     const roomWallGeometries = [];
     const roomWallMat = new THREE.MeshStandardMaterial({
       color: 0x94a3b8, roughness: 0.9, metalness: 0.0,
-      transparent: true, opacity: wallOpacity, side: THREE.DoubleSide,
+      transparent: true, opacity: wallOpacityRef.current, side: THREE.DoubleSide,
     });
     trackedMaterials.push(roomWallMat);
 
@@ -762,12 +1157,12 @@ export default function Canvas3D({
         const floorMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.8, metalness: 0.1 });
         const floorMesh = new THREE.Mesh(floorGeom, floorMat);
         floorMesh.position.set(rleft + rw / 2, -0.025, rz_min + rh / 2);
-        floorMesh.receiveShadow = true;
+        // receiveShadow removido: shadowMap desligado para performance
         scene.add(floorMesh);
         sceneObjectsRef.current.push(floorMesh);
         geometriesRef.current.push(floorGeom);
 
-        const esp = 0.12, altP = 2.8;
+        const esp = 0.12, altP = getAltTeto(room.id);
 
         // Criar geometrias de parede para merge posterior
         const wLeft = new THREE.BoxGeometry(esp, altP, rh);
@@ -809,8 +1204,7 @@ export default function Canvas3D({
         const mergedWalls = mergeGeometries(roomWallGeometries, false);
         geometriesRef.current.push(mergedWalls);
         const mergedWallMesh = new THREE.Mesh(mergedWalls, roomWallMat);
-        mergedWallMesh.castShadow = true;
-        mergedWallMesh.receiveShadow = true;
+        // castShadow/receiveShadow removidos: shadowMap desligado
         scene.add(mergedWallMesh);
         sceneObjectsRef.current.push(mergedWallMesh);
       } catch (e) {
@@ -818,10 +1212,178 @@ export default function Canvas3D({
       }
     }
 
+    // Actualizar referências globais de limites e lista de paredes para colisão
+    floorMinXRef.current = floorMinX;
+    floorMaxXRef.current = floorMaxX;
+    floorMinZRef.current = floorMinZ;
+    floorMaxZRef.current = floorMaxZ;
+
+    const allWalls = [...wallsToCreate];
+    rooms.forEach((room) => {
+      try {
+        const geojson = JSON.parse(room.poligono_geojson);
+        if (!geojson.coordinates || !geojson.coordinates[0]) return;
+        const coords = geojson.coordinates[0];
+        const rx0 = coords[0][0], rz0 = -coords[0][1];
+        const rx1 = coords[2][0], rz1 = -coords[2][1];
+        const rleft = Math.min(rx0, rx1), rz_min = Math.min(rz0, rz1);
+        const rw = Math.abs(rx1 - rx0), rh = Math.abs(rz1 - rz0);
+        if (rw <= 0.1 || rh <= 0.1) return;
+        allWalls.push({ x1: rleft, z1: rz_min, x2: rleft + rw, z2: rz_min });
+        allWalls.push({ x1: rleft + rw, z1: rz_min, x2: rleft + rw, z2: rz_min + rh });
+        allWalls.push({ x1: rleft + rw, z1: rz_min + rh, x2: rleft, z2: rz_min + rh });
+        allWalls.push({ x1: rleft, z1: rz_min, x2: rleft, z2: rz_min + rh });
+      } catch { }
+    });
+    wallsRef.current = allWalls;
+
+    // ─── 7b. Tetos 3D (Rooms + Linhas DXF elevadas com espessura + Polígonos DXF fechados) ──
+    tetoMeshesRef.current = [];
+    const tetoMat = new THREE.MeshStandardMaterial({
+      color: 0xdee2e6, roughness: 0.95, metalness: 0.0,
+      transparent: true, opacity: tetoOpacidadeRef.current,
+      side: THREE.DoubleSide,
+    });
+    trackedMaterials.push(tetoMat);
+    tetoMatRef.current = tetoMat;
+
+    // Material para as linhas do teto (mais subtil que as linhas do chão)
+    const tetoLineMat = new THREE.LineBasicMaterial({
+      color: 0x94a3b8, transparent: true, opacity: 0.6,
+    });
+    trackedMaterials.push(tetoLineMat);
+
+    // 7b-A: Tetos de Rooms (já estão nas coordenadas correctas)
+    rooms.forEach((room) => {
+      try {
+        const geojson = JSON.parse(room.poligono_geojson);
+        if (!geojson.coordinates || !geojson.coordinates[0]) return;
+        const coords = geojson.coordinates[0];
+        const rx0 = coords[0][0], rz0 = -coords[0][1];
+        const rx1 = coords[2][0], rz1 = -coords[2][1];
+        const rleft = Math.min(rx0, rx1), rz_min = Math.min(rz0, rz1);
+        const rw = Math.abs(rx1 - rx0), rh = Math.abs(rz1 - rz0);
+        if (rw <= 0.1 || rh <= 0.1) return;
+
+        const altTeto = getAltTeto(room.id);
+        const espLaje = 0.12;
+        const tetoGeom = new THREE.BoxGeometry(rw, espLaje, rh);
+        geometriesRef.current.push(tetoGeom);
+        const tetoMesh = new THREE.Mesh(tetoGeom, tetoMat);
+        tetoMesh.position.set(rleft + rw / 2, altTeto + espLaje / 2, rz_min + rh / 2);
+        tetoMesh.receiveShadow = true;
+        tetoMesh.visible = tetoVisivel;
+        scene.add(tetoMesh);
+        sceneObjectsRef.current.push(tetoMesh);
+        tetoMeshesRef.current.push(tetoMesh);
+      } catch (e) {
+        console.error("Erro ao criar teto de divisão 3D:", e);
+      }
+    });
+
+    // 7b-B: Linhas DXF de camadas "teto" — renderizadas elevadas com espessura 3D (vigas/lajes)
+    if (tetoLinePoints.length > 0) {
+      const elevatedPoints = [];
+      const beamSegments = [];
+
+      tetoLinePoints.forEach((tl) => {
+        const x1 = tl.x1 + tetoOffsetX;
+        const z1 = tl.z1 + tetoOffsetZ;
+        const x2 = tl.x2 + tetoOffsetX;
+        const z2 = tl.z2 + tetoOffsetZ;
+
+        const midX = (x1 + x2) / 2;
+        const midZ = (z1 + z2) / 2;
+        const room = getRoomParaComponente(midX, -midZ);
+        const altTeto = room ? getAltTeto(room.id) : altParede_teto;
+
+        elevatedPoints.push(new THREE.Vector3(x1, altTeto + 0.01, z1));
+        elevatedPoints.push(new THREE.Vector3(x2, altTeto + 0.01, z2));
+
+        const dx = x2 - x1, dz = z2 - z1;
+        const len = Math.sqrt(dx * dx + dz * dz);
+        if (len >= 0.1) {
+          const angle = Math.atan2(dz, dx);
+          beamSegments.push({ midX, midZ, len, angle, altTeto });
+        }
+      });
+
+      // Renderizar contornos em linha
+      const tetoLineGeom = new THREE.BufferGeometry().setFromPoints(elevatedPoints);
+      geometriesRef.current.push(tetoLineGeom);
+      const tetoLineSegments = new THREE.LineSegments(tetoLineGeom, tetoLineMat);
+      tetoLineSegments.visible = tetoVisivel;
+      scene.add(tetoLineSegments);
+      sceneObjectsRef.current.push(tetoLineSegments);
+      tetoMeshesRef.current.push(tetoLineSegments);
+
+      // Renderizar vigas/lajes 3D com volume/espessura sólidas (0.08m x 0.08m)
+      if (beamSegments.length > 0) {
+        const beamBaseGeom = new THREE.BoxGeometry(1, 1, 1);
+        geometriesRef.current.push(beamBaseGeom);
+        const beamInstanced = new THREE.InstancedMesh(beamBaseGeom, tetoMat, beamSegments.length);
+        const tempMatrix = new THREE.Matrix4(), tempPos = new THREE.Vector3();
+        const tempRot = new THREE.Quaternion(), tempScale = new THREE.Vector3();
+        const yAxis = new THREE.Vector3(0, 1, 0);
+        const espViga = 0.08;
+
+        beamSegments.forEach((b, idx) => {
+          tempPos.set(b.midX, b.altTeto - espViga / 2, b.midZ);
+          tempRot.setFromAxisAngle(yAxis, -b.angle);
+          tempScale.set(b.len, espViga, espViga);
+          tempMatrix.compose(tempPos, tempRot, tempScale);
+          beamInstanced.setMatrixAt(idx, tempMatrix);
+        });
+
+        beamInstanced.visible = tetoVisivel;
+        scene.add(beamInstanced);
+        sceneObjectsRef.current.push(beamInstanced);
+        tetoMeshesRef.current.push(beamInstanced);
+      }
+    }
+
+    // 7b-C: Tetos de polígonos DXF fechados (camada classificada como "teto") — com offset
+    if (geometria) {
+      (geometria.polilinhas || []).forEach((poli) => {
+        if (!poli.fechada) return;
+        const config = layerConfigs[poli.layer] || "mobiliario";
+        if (config !== "teto") return;
+        if (!poli.pontos || poli.pontos.length < 3) return;
+
+        try {
+          const shape = new THREE.Shape();
+          // Aplicar offset ao criar o shape
+          shape.moveTo(poli.pontos[0].x + tetoOffsetX, -(poli.pontos[0].y) + tetoOffsetZ);
+          for (let i = 1; i < poli.pontos.length; i++) {
+            shape.lineTo(poli.pontos[i].x + tetoOffsetX, -(poli.pontos[i].y) + tetoOffsetZ);
+          }
+          shape.closePath();
+
+          const extrudeSettings = { depth: 0.05, bevelEnabled: false };
+          const tetoGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+          geometriesRef.current.push(tetoGeom);
+
+          const tetoMesh = new THREE.Mesh(tetoGeom, tetoMat);
+          // ExtrudeGeometry cria no plano XY; rodar para horizontal e posicionar a altParede
+          tetoMesh.rotation.x = -Math.PI / 2;
+          tetoMesh.position.y = altParede_teto;
+          tetoMesh.receiveShadow = true;
+          tetoMesh.visible = tetoVisivel;
+          scene.add(tetoMesh);
+          sceneObjectsRef.current.push(tetoMesh);
+          tetoMeshesRef.current.push(tetoMesh);
+        } catch (e) {
+          console.warn("Erro ao criar teto DXF 3D:", e);
+        }
+      });
+    }
+
+
+
     // ─── 8. Componentes Elétricos — InstancedMesh + Iluminação Interativa ─────
     const compGroups = new Map();
     const switchMeshesRef = [];
-    const lampStateMapRef = { current: new Map() };
+    // lampStateMapRef já é useRef global — resetado no início do efeito
 
     // Helper: extrair array de comandos do rótulo JSON, array ou string (ex: "a, b" ou ["a", "b"])
     const getComponentComandosArray = (comp) => {
@@ -902,27 +1464,28 @@ export default function Canvas3D({
               if (!isNaN(num) && num > 0) return num;
             }
           }
-        } catch {}
+        } catch { }
       }
       return 0;
     };
 
-    // Helper para atualizar visual da lâmpada (ON/OFF)
+    // ─── Helper: atualizar visual da lâmpada (ON/OFF) — SEM limite de pool ──
+    // Todas as lâmpadas podem estar acesas visualmente (emissive + sprites).
+    // PointLights são geridas separadamente por distância à câmara (max 12).
     const updateLamp3DState = (lampObjs) => {
       const { pointLight, haloSprite, spotFloorMesh, lampMesh, baseWatts, isOn, hasPower,
-              isLedStrip, glowSprites } = lampObjs;
+        isLedStrip, glowSprites } = lampObjs;
 
-      // Uma luz SÓ acende se tiver potência configurada (> 0 W) E o interruptor associado estiver LIGADO (isOn)
       const shouldBeLit = hasPower && isOn;
 
       if (shouldBeLit) {
+        // Visuais sempre ON (emissive + sprites — baratos)
         const lightIntensity = Math.min(3.5, Math.max(1.2, 1.0 + baseWatts / 30));
         if (pointLight) pointLight.intensity = lightIntensity;
         if (haloSprite) haloSprite.material.opacity = 0.8;
         if (spotFloorMesh) spotFloorMesh.material.opacity = 0.35;
         if (lampMesh && lampMesh.material) {
           if (isLedStrip) {
-            // Fita LED: brilho contínuo ao longo de toda a fita (emissão forte)
             lampMesh.material.color.setHex(0xfbbf24);
             lampMesh.material.emissive.setHex(0xfbbf24);
             lampMesh.material.emissiveIntensity = isDia ? 5.0 : 12.0;
@@ -932,16 +1495,18 @@ export default function Canvas3D({
             lampMesh.material.emissiveIntensity = isDia ? 0.4 : 2.0;
           }
         }
-        // Glow sprites da fita LED
         if (glowSprites) {
           glowSprites.forEach(sprite => { sprite.material.opacity = 0.55; });
         }
       } else {
-        if (pointLight) pointLight.intensity = 0.0;
+        if (pointLight) {
+          pointLight.intensity = 0.0;
+          if (pointLight.parent) pointLight.parent.remove(pointLight);
+        }
         if (haloSprite) haloSprite.material.opacity = 0.0;
         if (spotFloorMesh) spotFloorMesh.material.opacity = 0.0;
         if (lampMesh && lampMesh.material) {
-          lampMesh.material.color.setHex(0x64748b); // Cinza desligado
+          lampMesh.material.color.setHex(0x64748b);
           lampMesh.material.emissive.setHex(0x000000);
           lampMesh.material.emissiveIntensity = 0.0;
         }
@@ -951,10 +1516,57 @@ export default function Canvas3D({
       }
     };
 
-    let shadowPointLightCount = 0;
+    // ─── PointLights dinâmicas: só as 12 mais próximas da câmara ───────────
+    const MAX_POINTLIGHTS = 12;
+    let lastPointLightUpdate = 0;
+    const updatePointLightsByDistance = () => {
+      const camera = cameraRef.current;
+      const scene = sceneRef.current;
+      if (!camera || !scene) return;
+      const now = performance.now();
+      if (now - lastPointLightUpdate < 200) return; // throttle 0.2s
+      lastPointLightUpdate = now;
+
+      const candidates = [];
+      lampStateMapRef.current.forEach((lamp) => {
+        if (lamp.pointLight && lamp.isOn && lamp.hasPower) {
+          candidates.push({
+            dist: camera.position.distanceToSquared(lamp.pointLight.position),
+            pointLight: lamp.pointLight,
+          });
+        }
+      });
+      candidates.sort((a, b) => a.dist - b.dist);
+
+      for (let i = 0; i < Math.min(MAX_POINTLIGHTS, candidates.length); i++) {
+        const pl = candidates[i].pointLight;
+        if (!pl.parent) scene.add(pl);
+      }
+      for (let i = MAX_POINTLIGHTS; i < candidates.length; i++) {
+        const pl = candidates[i].pointLight;
+        if (pl.parent) pl.parent.remove(pl);
+      }
+    };
+    updatePointLightsByDistanceRef.current = updatePointLightsByDistance;
 
     componentes.forEach((c) => {
-      const { geom, cor, yFinal, extraMesh, numSwitches } = getComponentGeometry(c);
+      // Ancorar lâmpadas de teto à face inferior da placa de teto da respectiva divisão
+      let overrideY = undefined;
+      // LED de jardim fica no chão — nunca ancorar ao teto
+      const isTetoLamp = c.tipo.startsWith("lampada") && c.tipo !== "lampada_arandela" && c.tipo !== "lampada_jardim";
+      if (isTetoLamp) {
+        const roomDoComp = getRoomParaComponente(c.x, c.y);
+        if (roomDoComp) {
+          const altTeto = getAltTeto(roomDoComp.id);
+          if (c.tipo === "lampada_pendente") {
+            // Pendente: overrideY = altura do teto, usada para calcular comprimento do cabo
+            overrideY = altTeto;
+          } else {
+            overrideY = altTeto - 0.025; // face inferior da laje de 0.05m
+          }
+        }
+      }
+      const { geom, cor, yFinal, extraMesh, numSwitches } = getComponentGeometry(c, overrideY);
       const watts = getComponentWatts(c);
       const hasPower = watts > 0;
 
@@ -962,28 +1574,17 @@ export default function Canvas3D({
       let lampHaloSprite = null;
       let lampFloorMesh = null;
 
-      // Criar fontes de luz para todas as lâmpadas
+      // Criar fontes de luz para todas as lâmpadas (pool: removidas da cena quando OFF)
+      const isJardim = c.tipo === "lampada_jardim";
       if (c.tipo.startsWith("lampada")) {
-        // 1. PointLight real (inicia com intensidade 0.0)
+        // 1. PointLight real (NÃO adicionada à cena ainda — só quando acender)
         const lightDistance = Math.max(5.0, 4.0 + Math.sqrt(watts > 0 ? watts : 60) * 0.5);
-
         lampPointLight = new THREE.PointLight(0xffedd5, 0.0, lightDistance, 1.5);
-        lampPointLight.position.set(c.x, yFinal - 0.1, -c.y);
-
-        // Limitar PointLights com sombra a 2 no máximo para não estourar os limites de textura da GPU (MAX_TEXTURE_IMAGE_UNITS)
-        if (shadowPointLightCount < 2) {
-          lampPointLight.castShadow = true;
-          lampPointLight.shadow.mapSize.width = 512;
-          lampPointLight.shadow.mapSize.height = 512;
-          lampPointLight.shadow.bias = -0.002;
-          lampPointLight.shadow.radius = 4;
-          shadowPointLightCount++;
-        } else {
-          lampPointLight.castShadow = false;
-        }
-
-        scene.add(lampPointLight);
-        sceneObjectsRef.current.push(lampPointLight);
+        // LED de jardim: luz acima da cabeça (a apontar para cima); teto: luz abaixo
+        const lightY = isJardim ? yFinal + 0.45 : yFinal - 0.1;
+        lampPointLight.position.set(c.x, lightY, -c.y);
+        lampPointLight.castShadow = false;
+        // PointLight NÃO adicionada à cena — gerida por updatePointLightsByDistance
 
         // 2. Halo de Brilho
         const haloMat = new THREE.SpriteMaterial({
@@ -997,7 +1598,8 @@ export default function Canvas3D({
         lampHaloSprite = new THREE.Sprite(haloMat);
         const haloScale = Math.min(1.2, Math.max(0.4, 0.4 + (watts / 100) * 0.5));
         lampHaloSprite.scale.set(haloScale, haloScale, 1.0);
-        lampHaloSprite.position.set(c.x, yFinal - 0.05, -c.y);
+        // LED de jardim: halo junto à cabeça (0.35m); teto: halo junto à lâmpada
+        lampHaloSprite.position.set(c.x, isJardim ? yFinal + 0.2 : yFinal - 0.05, -c.y);
         scene.add(lampHaloSprite);
         sceneObjectsRef.current.push(lampHaloSprite);
 
@@ -1087,7 +1689,7 @@ export default function Canvas3D({
               lampMesh: mesh,
               baseWatts: watts,
               hasPower,
-              isOn: false, // Inicia desligada
+              isOn: false,
             });
           }
 
@@ -1119,7 +1721,7 @@ export default function Canvas3D({
           pontos = parsed.pontos;
         }
         if (parsed.localizacao) localizacao = parsed.localizacao;
-      } catch {}
+      } catch { }
 
       if (pontos.length < 2) return;
 
@@ -1151,6 +1753,20 @@ export default function Canvas3D({
         const segGeom = new THREE.CylinderGeometry(stripRadius, stripRadius, segLen, 6, 1);
         segGeom.rotateX(Math.PI / 2); // Eixo Z -> Y
 
+        // Escalar UV-V para repetir LEDs ao longo do comprimento (cada tile = 1 LED)
+        const LED_SPACING_M = 0.0167; // ~60 LEDs/metro
+        const repeats = Math.max(1, Math.round(segLen / LED_SPACING_M));
+        const uvAttr = segGeom.getAttribute("uv");
+        if (uvAttr) {
+          const uvArray = uvAttr.array;
+          // Apenas os primeiros (radialSegments+1)*(heightSegments+1) vértices são da lateral
+          const sideCount = (6 + 1) * (1 + 1); // = 14
+          for (let j = 0; j < Math.min(sideCount, uvAttr.count); j++) {
+            uvArray[j * 2 + 1] *= repeats; // V = y
+          }
+          uvAttr.needsUpdate = true;
+        }
+
         // Posicionar no meio do segmento
         tempPos.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
 
@@ -1174,12 +1790,14 @@ export default function Canvas3D({
         }
         geometriesRef.current.push(merged);
 
+        const ledTex = getLedStripTexture();
         const stripMat = new THREE.MeshStandardMaterial({
           color: 0x64748b,
           roughness: 0.3,
           metalness: 0.1,
           emissive: 0x000000,
           emissiveIntensity: 0.0,
+          emissiveMap: ledTex,
         });
         trackedMaterials.push(stripMat);
 
@@ -1302,19 +1920,35 @@ export default function Canvas3D({
     const mouse = new THREE.Vector2();
     let mouseDownPos = { x: 0, y: 0 };
 
-    const domElem = renderer.domElement;
-
     const handlePointerDown = (e) => {
-      mouseDownPos = { x: e.clientX, y: e.clientY };
+      // Em 1ª pessoa com pointer lock, clientX/Y não são fiáveis — usamos centro
+      const locked = fpsControlsRef.current?.isLocked;
+      if (locked) {
+        mouseDownPos = { x: 0, y: 0 };
+      } else {
+        mouseDownPos = { x: e.clientX, y: e.clientY };
+      }
     };
 
     const handlePointerUp = (e) => {
-      const dist = Math.hypot(e.clientX - mouseDownPos.x, e.clientY - mouseDownPos.y);
-      if (dist > 5) return; // Se arrastou a câmara, ignora o clique
+      const locked = fpsControlsRef.current?.isLocked;
 
-      const rect = domElem.getBoundingClientRect();
-      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      // Em 1ª pessoa: o rato move a câmara via movementX/Y, não clientX/Y.
+      // Saltamos o drag check e usamos o centro do ecrã (crosshair).
+      if (!locked) {
+        const dist = Math.hypot(e.clientX - mouseDownPos.x, e.clientY - mouseDownPos.y);
+        if (dist > 5) return; // Se arrastou a câmara, ignora o clique
+      }
+
+      if (locked) {
+        // Crosshair está sempre no centro do ecrã quando o pointer está locked
+        mouse.x = 0;
+        mouse.y = 0;
+      } else {
+        const rect = domElem.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      }
 
       raycaster.setFromCamera(mouse, camera);
       const intersects = raycaster.intersectObjects(switchMeshesRef, true);
@@ -1341,6 +1975,9 @@ export default function Canvas3D({
               }
             });
 
+            // Atualizar PointLights por distância imediatamente após toggle
+            updatePointLightsByDistanceRef.current?.();
+
             // Animação/Flash no interruptor ao clicar
             if (hit.material) {
               const origColor = hit.material.color.getHex();
@@ -1360,6 +1997,8 @@ export default function Canvas3D({
     let lastMoveTime = 0;
     const handlePointerMove = (e) => {
       if (switchMeshesRef.length === 0) return;
+      // Em 1ª pessoa com pointer lock: cursor está oculto, não faz sentido hover
+      if (fpsControlsRef.current?.isLocked) return;
       if (e.buttons > 0) return; // Ignorar raycast enquanto se arrasta a câmara
       const now = performance.now();
       if (now - lastMoveTime < 60) return; // Throttle para ~16 FPS no hover
@@ -1386,8 +2025,8 @@ export default function Canvas3D({
     });
 
     const conduitRadius = 0.018; // raio do tubo conduto (~36mm diâmetro real)
-    const conduitTubularSegments = 12; // otimizado de 32 -> 12
-    const conduitRadialSegments = 5;   // otimizado de 8 -> 5
+    const conduitTubularSegments = 4;  // ultra-optimizado: 4 segmentos bastam
+    const conduitRadialSegments = 3;   // triângulo ≈ cilindro a esta escala
     conduitMeshesRef.current = [];
 
     // Map para lookup O(1) de componentes
@@ -1404,6 +2043,17 @@ export default function Canvas3D({
     });
     trackedMaterials.push(sharedTubeMat);
 
+    // Material para condutos subterrâneos (terracota/tijolo enterrado)
+    const subTubeMat = new THREE.MeshStandardMaterial({
+      color: 0xb45309,       // terracota/barro
+      roughness: 0.85,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.92,
+      depthTest: true,
+    });
+    trackedMaterials.push(subTubeMat);
+
     // Cache de materiais de fio interior por cor/circuito
     const wireMatCache = new Map();
 
@@ -1419,18 +2069,33 @@ export default function Canvas3D({
       const p1 = new THREE.Vector3(orig.x, y1, -orig.y);
       const p2 = new THREE.Vector3(dest.x, y2, -dest.y);
 
+      // Determinar nível de roteamento: subterrâneo (por baixo) ou teto/parede (por cima)
+      const isSub = conn.localizacao === "subterraneo";
+
       let pathCurve;
       const hasCurve = conn.c1_x != null && conn.c1_y != null;
 
       if (hasCurve) {
         // Conduto curvado — usar ponto de controlo da BD para Bezier
-        const tectoY = Math.max(y1, y2, 2.7) + 0.15;
-        const c1 = new THREE.Vector3(p1.x, tectoY, p1.z);
-        const c2 = new THREE.Vector3(p2.x, tectoY, p2.z);
-        pathCurve = new THREE.CubicBezierCurve3(p1, c1, c2, p2);
+        // Subterrâneo: converter para CatmullRom com ângulos rectos em vez de Bezier suave
+        if (isSub) {
+          const routeY = Math.min(y1, y2, -0.15) - 0.05;
+          const pathPoints = [
+            p1.clone(),
+            new THREE.Vector3(p1.x, routeY, p1.z),
+            new THREE.Vector3(p2.x, routeY, p2.z),
+            p2.clone(),
+          ];
+          pathCurve = new THREE.CatmullRomCurve3(pathPoints, false, "catmullrom", 1.0);
+        } else {
+          const routeY = Math.max(y1, y2, 2.7) + 0.15;
+          const c1 = new THREE.Vector3(p1.x, routeY, p1.z);
+          const c2 = new THREE.Vector3(p2.x, routeY, p2.z);
+          pathCurve = new THREE.CubicBezierCurve3(p1, c1, c2, p2);
+        }
       } else {
         // Conduto recto — criar curvas de 90º para entrada em tomadas e interruptores
-        const topY = Math.max(y1, y2, 2.7) + 0.05;
+        const routeY = isSub ? Math.min(y1, y2, -0.15) - 0.05 : Math.max(y1, y2, 2.7) + 0.05;
 
         // Helper para obter pontos de entrada com cotovelo de 90 graus
         const getWallEntryPoints = (comp, yComp, tY) => {
@@ -1459,8 +2124,8 @@ export default function Canvas3D({
           };
         };
 
-        const origRoute = getWallEntryPoints(orig, y1, topY);
-        const destRoute = getWallEntryPoints(dest, y2, topY);
+        const origRoute = getWallEntryPoints(orig, y1, routeY);
+        const destRoute = getWallEntryPoints(dest, y2, routeY);
 
         // Combinar pontos da origem até ao topo, atravessar até ao topo do destino e descer em 90º
         const pathPoints = [
@@ -1468,14 +2133,17 @@ export default function Canvas3D({
           ...destRoute.points.slice().reverse(),
         ];
 
-        pathCurve = new THREE.CatmullRomCurve3(pathPoints, false, "catmullrom", 0.0);
+        pathCurve = new THREE.CatmullRomCurve3(pathPoints, false, "catmullrom", isSub ? 1.0 : 0.0);
       }
+
+      // Selecionar material: subterrâneo usa terracota, teto/parede usa PVC cinza
+      const tubeMat = isSub ? subTubeMat : sharedTubeMat;
 
       // Tubo cilíndrico realista (estilo eletroduto PVC corrugado)
       const tubeGeom = new THREE.TubeGeometry(pathCurve, conduitTubularSegments, conduitRadius, conduitRadialSegments, false);
       geometriesRef.current.push(tubeGeom);
 
-      const tubeMesh = new THREE.Mesh(tubeGeom, sharedTubeMat);
+      const tubeMesh = new THREE.Mesh(tubeGeom, tubeMat);
       tubeMesh.renderOrder = 10; // renderizar depois das paredes
       scene.add(tubeMesh);
       sceneObjectsRef.current.push(tubeMesh);
@@ -1507,26 +2175,50 @@ export default function Canvas3D({
       conduitMeshesRef.current.push(wireMesh);
     });
 
+    // ─── Pré-classificação de meshes para bloom seletivo ────────────────────
+    // Evita scene.traverse() por frame: classificar uma vez na construção
+    const nonBloomMeshes = [];
+    let hasBloom = false;
+    scene.traverse((obj) => {
+      if (obj.isMesh) {
+        if (obj.layers.test(BLOOM_LAYER)) {
+          hasBloom = true;
+        } else {
+          nonBloomMeshes.push(obj);
+        }
+      }
+    });
+    nonBloomMeshesRef.current = nonBloomMeshes;
+    hasBloomObjectsRef.current = hasBloom;
+
     // ─── Primeiro render ────────────────────────────────────────────────────
     requestRender();
 
-    // ─── Resize handler ─────────────────────────────────────────────────────
+    // ─── Resize handler (debounced 200ms + bloom a 50%) ─────────────────────
+    let resizeTimeout;
     const handleResize = () => {
-      if (!containerRef.current) return;
-      const w = containerRef.current.clientWidth;
-      const h = containerRef.current.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-      bloomComposerRef.current?.setSize(w, h);
-      finalComposerRef.current?.setSize(w, h);
-      requestRender();
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        if (!containerRef.current) return;
+        const w = containerRef.current.clientWidth;
+        const h = containerRef.current.clientHeight;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+        // Bloom a 50% da nova resolução
+        const bw = Math.floor(w * 0.5);
+        const bh = Math.floor(h * 0.5);
+        bloomComposerRef.current?.setSize(bw, bh);
+        finalComposerRef.current?.setSize(w, h);
+        requestRender();
+      }, 200);
     };
     window.addEventListener("resize", handleResize);
 
     // ─── Cleanup: disposal rigoroso (evita memory leak GPU) ──────────────────
     return () => {
       isDisposedRef.current = true;
+      clearTimeout(resizeTimeout);
       if (cameraRef.current) {
         savedCameraPosRef.current = cameraRef.current.position.clone();
       }
@@ -1538,9 +2230,13 @@ export default function Canvas3D({
         animFrameIdRef.current = null;
       }
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      domElem.removeEventListener("click", handleCanvasClick);
       domElem.removeEventListener("pointerdown", handlePointerDown);
       domElem.removeEventListener("pointerup", handlePointerUp);
       domElem.removeEventListener("pointermove", handlePointerMove);
+      fpsControls.dispose();
 
       // Dispose recursivo de TODOS os objetos na cena (inclui geometries, materials, textures, children)
       disposeScene(scene);
@@ -1559,6 +2255,8 @@ export default function Canvas3D({
 
       // Limpar arrays de referências
       conduitMeshesRef.current = [];
+      tetoMeshesRef.current = [];
+      tetoMatRef.current = null;
       sceneObjectsRef.current = [];
 
       bloomComposerRef.current?.dispose();
@@ -1570,19 +2268,24 @@ export default function Canvas3D({
       bloomBlendPassRef.current = null;
       scene.clear();
 
-      // Limpar cache de textura glow no unmount final
+      // Limpar caches de textura no unmount final
       if (glowTextureCache) {
         glowTextureCache.dispose();
         glowTextureCache = null;
       }
+      if (ledStripTextureCache) {
+        ledStripTextureCache.dispose();
+        ledStripTextureCache = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geometria, componentes, conexoes, rooms, layerConfigs, wallOpacity, modoDiaNoite]);
+  }, [geometria, componentes, conexoes, rooms, layerConfigs, modoDiaNoite, alturasPorRoom, alturasPorCamada]);
 
   // Atualizar opacidade
   const handleOpacityChange = useCallback((e) => {
     const val = parseFloat(e.target.value);
     setWallOpacity(val);
+    wallOpacityRef.current = val;
     materialsRef.current.forEach((mat) => {
       if (mat && typeof mat.opacity !== 'undefined') mat.opacity = val;
     });
@@ -1596,13 +2299,124 @@ export default function Canvas3D({
     });
   }, []);
 
+  // ─── Handlers do Teto ──────────────────────────────────────────────────
+  const handleTetoOpacityChange = useCallback((e) => {
+    const val = parseFloat(e.target.value);
+    setTetoOpacidade(val);
+    tetoOpacidadeRef.current = val;
+    if (tetoMatRef.current) {
+      tetoMatRef.current.opacity = val;
+      tetoMatRef.current.needsUpdate = true;
+    }
+    requestRender();
+  }, [requestRender]);
+
+  const handleTetoToggle = useCallback((e) => {
+    const vis = e.target.checked;
+    setTetoVisivel(vis);
+    tetoMeshesRef.current.forEach((mesh) => {
+      if (mesh) mesh.visible = vis;
+    });
+    requestRender();
+  }, [requestRender]);
+
+  // ─── Alternar Modo de Navegação (Orbital vs 1ª Pessoa) ──────────────────
+  const handleToggleNavMode = useCallback((newMode) => {
+    if (newMode === modoNavegacaoRef.current) return;
+    setModoNavegacao(newMode);
+    modoNavegacaoRef.current = newMode;
+
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+
+    if (newMode === "firstPerson") {
+      if (camera && controls) {
+        savedCameraPosRef.current = camera.position.clone();
+        savedCameraTargetRef.current = controls.target.clone();
+        controls.enabled = false;
+      }
+
+      if (camera) {
+        let startX = 0, startZ = 10;
+        let lookTargetX = 0, lookTargetZ = 0;
+
+        if (floorMinXRef.current !== Infinity && floorMaxXRef.current !== -Infinity) {
+          lookTargetX = (floorMinXRef.current + floorMaxXRef.current) / 2;
+          lookTargetZ = (floorMinZRef.current + floorMaxZRef.current) / 2;
+          startX = lookTargetX;
+          // Posicionar 3.5 metros fora da parede frontal da casa
+          startZ = floorMaxZRef.current + 3.5;
+        } else if (savedCameraTargetRef.current) {
+          lookTargetX = savedCameraTargetRef.current.x;
+          lookTargetZ = savedCameraTargetRef.current.z;
+          startX = lookTargetX;
+          startZ = lookTargetZ + 6;
+        }
+
+        camera.position.set(startX, 1.65, startZ);
+        camera.lookAt(lookTargetX, 1.65, lookTargetZ);
+      }
+
+      setTimeout(() => {
+        fpsControlsRef.current?.lock();
+      }, 50);
+    } else {
+      if (fpsControlsRef.current?.isLocked) {
+        fpsControlsRef.current.unlock();
+      }
+      setIsLocked(false);
+      // Limpar teclas residuais ao sair do modo FPS
+      keysPressedRef.current = {};
+
+      if (camera && controls && savedCameraPosRef.current && savedCameraTargetRef.current) {
+        camera.position.copy(savedCameraPosRef.current);
+        controls.target.copy(savedCameraTargetRef.current);
+        controls.enabled = true;
+        controls.update();
+      }
+    }
+    requestRender();
+  }, [requestRender]);
+
   return (
     <div className="canvas3d-container" ref={containerRef}>
       <canvas ref={canvasRef} />
 
+      {modoNavegacao === "firstPerson" && (
+        <>
+          <div className="canvas3d-crosshair">+</div>
+          <div className="canvas3d-fps-instructions">
+            {isLocked ? (
+              <span>⌨️ <strong>WASD / Setas</strong> para andar | 🐭 Rato para olhar | Pressione <kbd>ESC</kbd> para libertar</span>
+            ) : (
+              <span>👉 <strong>Clique no ecrã 3D</strong> para ativar o controlo do rato</span>
+            )}
+          </div>
+        </>
+      )}
+
       <div className="canvas3d-overlay">
         <div className="canvas3d-card">
           <div className="canvas3d-card-title">🔍 Visualização 3D</div>
+
+          <div className="nav-mode-switcher">
+            <button
+              type="button"
+              className={`nav-mode-btn ${modoNavegacao === "orbit" ? "active-orbit" : ""}`}
+              onClick={() => handleToggleNavMode("orbit")}
+              title="Vista Orbital 3D (Câmara livre em redor)"
+            >
+              🛸 Vista Orbital
+            </button>
+            <button
+              type="button"
+              className={`nav-mode-btn ${modoNavegacao === "firstPerson" ? "active-fps" : ""}`}
+              onClick={() => handleToggleNavMode("firstPerson")}
+              title="Passeio em 1ª Pessoa (Caminhar no interior)"
+            >
+              🚶 1ª Pessoa
+            </button>
+          </div>
 
           <button
             type="button"
@@ -1621,24 +2435,93 @@ export default function Canvas3D({
             />
           </div>
 
+          <div className="control-group">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input type="checkbox" checked={tetoVisivel} onChange={handleTetoToggle} />
+              Mostrar Teto
+            </label>
+          </div>
+
+          {tetoVisivel && (
+            <div className="control-group">
+              <label>Opacidade do Teto: {Math.round(tetoOpacidade * 100)}%</label>
+              <input
+                type="range" min="0" max="1" step="0.05"
+                value={tetoOpacidade} onChange={handleTetoOpacityChange}
+                className="opacity-slider"
+              />
+            </div>
+          )}
+
+          {rooms.length > 0 && (
+            <div className="control-group">
+              <div style={{ fontWeight: 600, marginBottom: 4, fontSize: "0.82rem" }}>Pé-Direito por Divisão</div>
+              {rooms.map((r) => (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, fontSize: "0.8rem" }}>
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.nome}>{r.nome || `Divisão ${r.id}`}</span>
+                  <input
+                    type="number" min="2.0" max="6.0" step="0.1"
+                    value={alturasPorRoom[r.id] || 2.8}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      if (!isNaN(val) && val >= 2.0 && val <= 6.0) {
+                        setAlturasPorRoom((prev) => ({ ...prev, [r.id]: val }));
+                      }
+                    }}
+                    style={{ width: 58, padding: "2px 4px", borderRadius: 4, border: "1px solid var(--border-color, #555)", background: "var(--bg-secondary, #1e1e2e)", color: "inherit", fontSize: "0.8rem" }}
+                  />
+                  <span style={{ fontSize: "0.75rem", opacity: 0.7 }}>m</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {geometria && geometria.camadas && Object.keys(layerConfigs).length > 0 && (
             <div className="dxf-layers-config">
               <h4>Configuração de Camadas DXF (3D)</h4>
-              <p className="subtitle">Defina o tipo de cada camada no modelo:</p>
+              <p className="subtitle">Defina o tipo e altura de cada camada:</p>
               <div className="layers-list">
                 {Object.keys(layerConfigs).map((camada) => (
-                  <div key={camada} className="layer-row">
+                  <div key={camada} className="layer-row" style={{ flexWrap: "wrap" }}>
                     <span className="layer-name" title={camada}>{camada}</span>
-                    <select
-                      value={layerConfigs[camada]}
-                      onChange={(e) => handleLayerConfigChange(camada, e.target.value)}
-                      className="layer-select"
-                    >
-                      <option value="parede">🧱 Parede</option>
-                      <option value="janela">🪟 Janela</option>
-                      <option value="porta">🚪 Porta/Vão</option>
-                      <option value="mobiliario">🛋️ Mobiliário/Outro</option>
-                    </select>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <select
+                        value={layerConfigs[camada]}
+                        onChange={(e) => handleLayerConfigChange(camada, e.target.value)}
+                        className="layer-select"
+                      >
+                        <option value="parede">🧱 Parede</option>
+                        <option value="janela">🪟 Janela</option>
+                        <option value="porta">🚪 Porta/Vão</option>
+                        <option value="teto">🏗️ Teto</option>
+                        <option value="mobiliario">🛋️ Mobiliário/Outro</option>
+                      </select>
+                      {layerConfigs[camada] === "parede" && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                          <input
+                            type="number" min="1.0" max="8.0" step="0.1"
+                            title="Altura da camada (m)"
+                            value={alturasPorCamada[camada] || 2.8}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              if (!isNaN(val) && val >= 1.0 && val <= 8.0) {
+                                setAlturasPorCamada((prev) => ({ ...prev, [camada]: val }));
+                              }
+                            }}
+                            style={{
+                              width: 50,
+                              padding: "2px 4px",
+                              borderRadius: 4,
+                              border: "1px solid var(--border-color, #555)",
+                              background: "var(--bg-secondary, #1e1e2e)",
+                              color: "inherit",
+                              fontSize: "0.75rem",
+                            }}
+                          />
+                          <span style={{ fontSize: "0.75rem", opacity: 0.7 }}>m</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1666,11 +2549,19 @@ export default function Canvas3D({
 
           <div className="canvas3d-tips">
             <strong>Como navegar:</strong>
-            <ul>
-              <li>🖱 Botão esquerdo: Rodar câmara</li>
-              <li>🖱 Botão direito / Shift: Arrastar</li>
-              <li>☸ Scroll: Fazer Zoom</li>
-            </ul>
+            {modoNavegacao === "firstPerson" ? (
+              <ul>
+                <li>⌨️ WASD / Setas: Caminhar</li>
+                <li>🖱 Rato: Olhar em redor (360°)</li>
+                <li><kbd>ESC</kbd>: Libertar ponteiro do rato</li>
+              </ul>
+            ) : (
+              <ul>
+                <li>🖱 Botão esquerdo: Rodar câmara</li>
+                <li>🖱 Botão direito / Shift: Arrastar</li>
+                <li>☸ Scroll: Fazer Zoom</li>
+              </ul>
+            )}
           </div>
 
           <button className="canvas3d-close-btn" onClick={onClose}>

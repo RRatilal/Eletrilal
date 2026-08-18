@@ -11,12 +11,17 @@ export function useAutosave(projectId, dados, delayMs = 2000) {
   const [estado, setEstado] = useState("guardado"); // "guardado" | "pendente" | "a-guardar"
   const timerRef = useRef(null);
   const ultimoRef = useRef(null);
+  const dadosRef = useRef(dados);
 
   const CHAVE = `electrilal_autosave_${projectId}`;
 
   // Guarda quando os dados mudam (com debounce) — sem geometria
   useEffect(() => {
     if (!projectId || !dados) return;
+
+    // Evitar stringify se a referência de dados não mudou
+    if (dadosRef.current === dados && ultimoRef.current !== null) return;
+    dadosRef.current = dados;
 
     // Remover geometria do autosave para evitar estourar o limite do localStorage
     const { geometria, ...dadosLeves } = dados;

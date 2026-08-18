@@ -11,9 +11,9 @@ const ThemeContext = createContext(null);
 export function ThemeProvider({ children }) {
   const [tema, setTema] = useState(() => {
     try {
-      return localStorage.getItem("electrilal_tema") || "light";
+      return localStorage.getItem("electrilal_tema") || "dark";
     } catch {
-      return "light";
+      return "dark";
     }
   });
 

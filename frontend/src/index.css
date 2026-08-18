@@ -1,114 +1,115 @@
 /* ========================================================================
    Electrilal — Design System & Global Styles
-   Dark theme, Inter font, CSS custom properties
+   Mundo visual: «O Contador de Tubos Néon»
+   Bancada de instrumentos: metal escovado escuro, baquelite, rótulos
+   gravados e algarismos âmbar dentro de tubos de vidro.
    ======================================================================== */
 
 /* ---------- CSS Custom Properties (Design Tokens) ---------- */
 
 /* ═══════════════════════════════════════════════════════════════════════
-   TEMA CLARO (padrão)
+   TEMA ESCURO — a bancada de trabalho (padrão)
+   Quem: projetista/eletricista · Onde: oficina ao fim do dia · Luz: âmbar
    ═══════════════════════════════════════════════════════════════════════ */
 :root,
-[data-theme="light"] {
-  --bg-primary: #f8fafc;
-  --bg-secondary: #f1f5f9;
-  --bg-tertiary: #ffffff;
-  --bg-elevated: #ffffff;
-  --bg-canvas: #e8ecf0;
+[data-theme="dark"] {
+  --bg-primary: #0b0d10;   /* parede da oficina */
+  --bg-secondary: #111418; /* mesa de trabalho */
+  --bg-tertiary: #161a1f;  /* painel recuado */
+  --bg-elevated: #1c2127;  /* painel elevado / inset */
+  --bg-canvas: #0e1014;    /* a folha de desenho (planta) */
 
-  /* Toolbar/panel backgrounds com transparência */
-  --bg-toolbar: rgba(248, 250, 252, 0.88);
-  --bg-panel: rgba(255, 255, 255, 0.88);
-  --bg-dropdown: rgba(255, 255, 255, 0.95);
+  /* Painéis/toolbars sólidos (metal escovado — sem vidro) */
+  --bg-toolbar: #101318;
+  --bg-panel: #15181d;
+  --bg-dropdown: #1b1f26;
 
-  /* Accent / brand */
-  --accent-primary: #4f46e5;
-  --accent-primary-hover: #6366f1;
-  --accent-secondary: #7c3aed;
-  --accent-glow: rgba(79, 70, 229, 0.12);
+  /* Acento — néon âmbar dos tubos nixie */
+  --accent-primary: #ffa62b;
+  --accent-primary-hover: #ffbe5c;
+  --accent-secondary: #ff7a45; /* filamento quente */
+  --accent-glow: rgba(255, 166, 43, 0.18);
 
-  /* Text */
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-tertiary: #94a3b8;
-  --text-inverse: #f1f5f9;
+  /* Texto — rótulo gravado */
+  --text-primary: #f0ece2;
+  --text-secondary: #a9a398;
+  --text-tertiary: #6f6a60;
+  --text-inverse: #0b0d10;
 
-  /* Borders */
-  --border-subtle: rgba(0, 0, 0, 0.06);
-  --border-default: rgba(0, 0, 0, 0.1);
-  --border-strong: rgba(0, 0, 0, 0.16);
+  /* Arestas maquinadas */
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.18);
 
-  /* Shadows - mais suaves no light */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
-  --shadow-glow: 0 0 20px var(--accent-glow);
+  /* Sombras com offset + blur (metal apoiado) */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.62);
+  --shadow-glow: 0 0 18px var(--accent-glow);
 
-  /* SVG icon color */
-  --svg-stroke: #334155;
-  --svg-fill: #334155;
+  --svg-stroke: #cbc5b8;
+  --svg-fill: #cbc5b8;
 
-  /* Home screen gradient fundo claro */
-  --home-gradient: linear-gradient(135deg, #f8fafc 0%, #eef2ff 50%, #f1f5f9 100%);
+  --home-gradient: radial-gradient(1200px 800px at 32% 18%, #1c1610 0%, #0b0d10 58%);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   TEMA ESCURO
+   TEMA CLARO — a bancada de dia (baquelite creme)
    ═══════════════════════════════════════════════════════════════════════ */
-[data-theme="dark"] {
-  --bg-primary: #0f1117;
-  --bg-secondary: #1a1d27;
-  --bg-tertiary: #242836;
-  --bg-elevated: #2a2e3d;
-  --bg-canvas: #1e2028;
+[data-theme="light"] {
+  --bg-primary: #efe8db;
+  --bg-secondary: #e6ddcc;
+  --bg-tertiary: #f7f2e8;
+  --bg-elevated: #fbf7ef;
+  --bg-canvas: #e4d9c7;
 
-  --bg-toolbar: rgba(15, 17, 23, 0.85);
-  --bg-panel: rgba(26, 29, 39, 0.88);
-  --bg-dropdown: rgba(17, 24, 39, 0.95);
+  --bg-toolbar: #f6f1e6;
+  --bg-panel: #f6f1e6;
+  --bg-dropdown: #fbf7ef;
 
-  --accent-primary: #6366f1;
-  --accent-primary-hover: #818cf8;
-  --accent-secondary: #8b5cf6;
-  --accent-glow: rgba(99, 102, 241, 0.15);
+  --accent-primary: #b35d0a;
+  --accent-primary-hover: #9a4f08;
+  --accent-secondary: #c73f1a;
+  --accent-glow: rgba(179, 93, 10, 0.18);
 
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-tertiary: #64748b;
-  --text-inverse: #0f1117;
+  --text-primary: #2a251d;
+  --text-secondary: #5c5447;
+  --text-tertiary: #8c8270;
+  --text-inverse: #f6f1e6;
 
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-default: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-default: rgba(0, 0, 0, 0.14);
+  --border-strong: rgba(0, 0, 0, 0.22);
 
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 20px var(--accent-glow);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.14);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.18);
+  --shadow-glow: 0 0 18px var(--accent-glow);
 
-  --svg-stroke: #cbd5e1;
-  --svg-fill: #cbd5e1;
+  --svg-stroke: #4a4438;
+  --svg-fill: #4a4438;
 
-  --home-gradient: linear-gradient(135deg, var(--bg-primary) 0%, #141825 50%, var(--bg-secondary) 100%);
+  --home-gradient: radial-gradient(1200px 800px at 32% 18%, #f3ead6 0%, #e6ddcc 60%);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
    PROPRIEDADES COMUNS (não mudam com o tema)
    ═══════════════════════════════════════════════════════════════════════ */
 :root {
-  /* Component colors (mantêm-se iguais em ambos os temas) */
-  --color-tomada: #3b82f6;
-  --color-interruptor: #22c55e;
-  --color-luminaria: #f59e0b;
-  --color-lampada: #f59e0b;
+  /* Cores semânticas do desenho (mantêm-se: pertencem ao canvas) */
+  --color-tomada: #4b9cff;
+  --color-interruptor: #3ddc84;
+  --color-luminaria: #f5a623;
+  --color-lampada: #f5a623;
   --color-quadro: #ef4444;
   --color-telecom: #ec4899;
   --color-passagem: #8b5cf6;
 
   /* Status colors */
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
+  --color-success: #34d399;
+  --color-warning: #f5a623;
   --color-error: #ef4444;
-  --color-info: #3b82f6;
+  --color-info: #38bdf8;
 
   /* Spacing */
   --space-xs: 4px;
@@ -117,12 +118,13 @@
   --space-lg: 16px;
   --space-xl: 24px;
   --space-2xl: 32px;
+  --space-xxl: 40px;
 
-  /* Radii */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  /* Radii — arestas maquinadas (cortadas, não vidradas) */
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
 
   /* Transitions */
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -131,6 +133,7 @@
 
   /* Typography */
   --font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-family-mono: 'Spline Sans Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
   --font-size-xs: 11px;
   --font-size-sm: 12px;
   --font-size-base: 13px;
@@ -201,7 +204,7 @@ body,
 /* ---------- Selection ---------- */
 ::selection {
   background: var(--accent-primary);
-  color: var(--text-primary);
+  color: var(--text-inverse);
 }
 
 /* ---------- Focus ---------- */

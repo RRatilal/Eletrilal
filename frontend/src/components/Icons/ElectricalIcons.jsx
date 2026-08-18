@@ -329,6 +329,21 @@ export function IconLampadaPendente() {
 }
 
 /**
+ * LED Jardim / Espeto (fica no chão a apontar para cima)
+ */
+export function IconLampadaJardim() {
+  return (
+    <SvgIcon>
+      {/* Base/espeto no chão */}
+      <circle cx="50" cy="62" r="10" />
+      <line x1="50" y1="52" x2="50" y2="35" />
+      {/* Cabeça cónica a apontar para cima */}
+      <polyline points="38,38 50,22 62,38" />
+    </SvgIcon>
+  );
+}
+
+/**
  * Tomada Tripla
  */
 export function IconTomadaTripla() {
@@ -532,6 +547,18 @@ export function IconQuadro() {
   );
 }
 
+/**
+ * Quadro Parcial / QP
+ */
+export function IconQuadroParcial() {
+  return (
+    <SvgIcon>
+      <rect x="15" y="25" width="70" height="50" rx="5" strokeDasharray="6,4" />
+      <polyline points="55,32 42,50 52,50 45,68 62,48 52,48 58,32" />
+    </SvgIcon>
+  );
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mapa de ícones por tipo de componente
@@ -547,6 +574,7 @@ export const ICON_MAP = {
   lampada_led: IconLampadaLed,
   lampada_led_fita: IconLampadaLed,
   lampada_pendente: IconLampadaPendente,
+  lampada_jardim: IconLampadaJardim,
   luminaria: IconLampada,
 
   // Tomadas
@@ -585,6 +613,7 @@ export const ICON_MAP = {
 
   // Quadro
   quadro: IconQuadro,
+  quadro_parcial: IconQuadroParcial,
 };
 
 /**

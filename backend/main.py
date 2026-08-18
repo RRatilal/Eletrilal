@@ -13,12 +13,12 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import engine, Base
+from database import init_db
 import models  # noqa: F401 - necessário para o create_all conhecer as tabelas
 from routers import projects, upload, export
 
-# Cria as tabelas no SQLite se ainda não existirem
-Base.metadata.create_all(bind=engine)
+# Cria as tabelas e índices no SQLite se ainda não existirem
+init_db()
 
 app = FastAPI(
     title="Electrilal API",

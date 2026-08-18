@@ -18,7 +18,7 @@ function getBaseType(tipo) {
   if (tipo.startsWith("interruptor")) return "interruptor";
   if (["telefonia", "dados", "tv", "campainha", "camera"].includes(tipo)) return "telecom";
   if (tipo.startsWith("passagem")) return "passagem";
-  if (tipo === "quadro") return "quadro";
+  if (tipo.startsWith("quadro")) return "quadro";
   return "outro";
 }
 
@@ -31,6 +31,7 @@ const LABELS_TIPO = {
   lampada_led: "Fita de LED",
   lampada_led_fita: "Fita de LED",
   lampada_pendente: "Lustre / Pendente",
+  lampada_jardim: "LED Jardim / Espeto",
 
   tomada: "Tomada",
   tomada_baixa: "Tomada Baixa",

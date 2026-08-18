@@ -1,0 +1,157 @@
+/* ========================================================================
+   NixieDisplay — algarismos âmbar dentro de tubos de vidro
+   Assinatura do mundo «O Contador de Tubos Néon».
+   Os tubos são sempre vidro escuro, independentemente do tema.
+   ======================================================================== */
+
+.nixie-display {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  font-family: var(--font-family-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 1;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* --- Tubo de vidro --- */
+.nixie-tube {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 13px;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #23272f 0%, #12151a 55%, #1a1e25 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 1px 1px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+/* Reflexo de vidro no topo */
+.nixie-tube::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 2px;
+  right: 2px;
+  height: 42%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0));
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* --- Algarismos "fantasma" (profundidade do tubo) --- */
+.nixie-ghost {
+  position: absolute;
+  color: rgba(255, 166, 43, 0.13);
+  pointer-events: none;
+}
+
+.nixie-ghost-1 {
+  transform: translate(-1.5px, -1.5px) scale(0.94);
+  color: rgba(255, 166, 43, 0.09);
+}
+
+.nixie-ghost-2 {
+  transform: translate(-3px, -3px) scale(0.88);
+  color: rgba(255, 140, 26, 0.06);
+}
+
+/* --- Algarismo aceso --- */
+.nixie-digit {
+  position: relative;
+  color: #ffb54a;
+  text-shadow:
+    0 0 3px rgba(255, 166, 43, 0.9),
+    0 0 8px rgba(255, 140, 26, 0.55),
+    0 0 16px rgba(255, 120, 20, 0.3);
+  animation: nixie-warm 0.5s ease-out;
+}
+
+/* Pontuação (., % −) mais contida */
+.nixie-tube-punct {
+  min-width: 8px;
+  padding: 1px 2px;
+}
+
+.nixie-punct {
+  color: #ffa62b;
+  text-shadow: 0 0 6px rgba(255, 166, 43, 0.5);
+}
+
+/* Espaço entre grupos */
+.nixie-gap {
+  width: 4px;
+}
+
+/* --- Unidade gravada --- */
+.nixie-unit {
+  margin-left: 5px;
+  font-family: var(--font-family, sans-serif);
+  font-size: 0.82em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+/* --- Tamanhos --- */
+.nixie-sm {
+  font-size: 12px;
+}
+.nixie-sm .nixie-tube {
+  min-width: 12px;
+}
+
+.nixie-md {
+  font-size: 15px;
+}
+.nixie-md .nixie-tube {
+  min-width: 15px;
+}
+
+.nixie-lg {
+  font-size: 20px;
+}
+.nixie-lg .nixie-tube {
+  min-width: 19px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+/* --- Animação de "aquecimento" do filamento --- */
+@keyframes nixie-warm {
+  0% {
+    opacity: 0.15;
+    text-shadow: 0 0 2px rgba(255, 166, 43, 0.2);
+  }
+  40% {
+    opacity: 0.6;
+    text-shadow: 0 0 6px rgba(255, 166, 43, 0.6);
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* --- Palpitação subtil do brilho (uma única vez, não por dígito) --- */
+.nixie-display .nixie-tube:nth-child(2) .nixie-digit {
+  animation-delay: 0.05s;
+}
+.nixie-display .nixie-tube:nth-child(3) .nixie-digit {
+  animation-delay: 0.1s;
+}
+.nixie-display .nixie-tube:nth-child(4) .nixie-digit {
+  animation-delay: 0.15s;
+}
+.nixie-display .nixie-tube:nth-child(5) .nixie-digit {
+  animation-delay: 0.2s;
+}
+.nixie-display .nixie-tube:nth-child(6) .nixie-digit {
+  animation-delay: 0.25s;
+}

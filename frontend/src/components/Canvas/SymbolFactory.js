@@ -28,7 +28,7 @@ export function createLampSymbol(electricalData) {
   // ── Geometry (Standard 40x40 px size) ─────────────────────────────────
   const circle = new fabric.Circle({
     radius: 20, left: 0, top: 0,
-    fill: "transparent", stroke: LAMP_STROKE, strokeWidth: STROKE_WIDTH,
+    fill: "rgba(0,0,0,0.001)", stroke: LAMP_STROKE, strokeWidth: STROKE_WIDTH,
     originX: "center", originY: "center",
   });
 

@@ -59,6 +59,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(dados),
     }),
+  atualizarComponentesLote: (ids, dados) =>
+    request(`/components/batch-update`, {
+      method: "POST",
+      body: JSON.stringify({ ids, dados }),
+    }),
   apagarComponente: (componentId) =>
     request(`/components/${componentId}`, { method: "DELETE" }),
 
@@ -129,9 +134,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ids }),
     }),
+  obterFiacaoEletrodutos: (projectId) =>
+    request(`/projects/${projectId}/eletrodutos/fiacao`),
 
   // Export
   exportarDxfUrl: (projectId) => `${BASE_URL}/projects/${projectId}/export/dxf`,
+  exportarPdf: async (projectId, config) => {
+    const res = await fetch(`${BASE_URL}/projects/${projectId}/export/pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) {
+      const detalhe = await res.json().catch(() => ({}));
+      throw new Error(detalhe.detail || "Erro ao gerar o PDF.");
+    }
+    return res.blob();
+  },
 
   // Importar Planta PDF
   importarPlantaPDF: async (projectId, file) => {

@@ -21,37 +21,49 @@ def _configurar_pragmas_sqlite(dbapi_connection, connection_record):
     """
     Ativa WAL (Write-Ahead Logging) + synchronous=NORMAL em cada nova conexão.
     WAL permite leituras concorrentes enquanto há uma escrita em curso (em vez
-    de bloquear a base de dados inteira), o que importa aqui porque o
-    autosave do frontend pode escrever componentes/posições enquanto outros
-    pedidos GET (listagens, dimensionamento) estão a ler.
-    synchronous=NORMAL é seguro em modo WAL e evita fsync a cada escrita,
-    reduzindo a latência sem risco real de corrupção de dados num uso local.
+    de bloquear a base de dados inteira).
+    synchronous=NORMAL é seguro em modo WAL e evita fsync a cada escrita.
     """
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("PRAGMA synchronous=NORMAL;")
-
-    # Migração automática: adicionar colunas novas se não existirem
-    # (SQLite não suporta ALTER TABLE ADD COLUMN IF NOT EXISTS)
-    _migar_coluna(cursor, "circuits", "temperatura_c", "FLOAT DEFAULT 30.0")
-    _migar_coluna(cursor, "circuits", "queda_tensao_max_pct", "FLOAT DEFAULT 4.0")
-    _migar_coluna(cursor, "connections", "localizacao", "VARCHAR DEFAULT 'teto_parede'")
-    _migar_coluna(cursor, "connections", "circuitos_bloqueados", "VARCHAR DEFAULT '[]'")
-    _migar_coluna(cursor, "connections", "c1_x", "FLOAT DEFAULT NULL")
-    _migar_coluna(cursor, "connections", "c1_y", "FLOAT DEFAULT NULL")
-    _migar_coluna(cursor, "components", "scale_x", "FLOAT DEFAULT 1.0")
-    _migar_coluna(cursor, "components", "scale_y", "FLOAT DEFAULT 1.0")
-
-    # Migração automática: criar índices para as chaves estrangeiras
-    _criar_indice(cursor, "rooms", "project_id", "idx_rooms_project_id")
-    _criar_indice(cursor, "circuits", "project_id", "idx_circuits_project_id")
-    _criar_indice(cursor, "components", "project_id", "idx_components_project_id")
-    _criar_indice(cursor, "components", "circuit_id", "idx_components_circuit_id")
-    _criar_indice(cursor, "connections", "project_id", "idx_connections_project_id")
-    _criar_indice(cursor, "connections", "origem_id", "idx_connections_origem_id")
-    _criar_indice(cursor, "connections", "destino_id", "idx_connections_destino_id")
-
     cursor.close()
+
+
+def init_db():
+    """
+    Executado uma vez no arranque da aplicação: cria tabelas,
+    aplica migrações de colunas e garante os índices FK em SQLite.
+    """
+    Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        dbapi_conn = conn.connection
+        cursor = dbapi_conn.cursor()
+
+        # Migração automática: adicionar colunas novas se não existirem
+        _migar_coluna(cursor, "circuits", "temperatura_c", "FLOAT DEFAULT 30.0")
+        _migar_coluna(cursor, "circuits", "queda_tensao_max_pct", "FLOAT DEFAULT 4.0")
+        _migar_coluna(cursor, "circuits", "quadro_id", "INTEGER REFERENCES components(id)")
+        _migar_coluna(cursor, "circuits", "numero", "INTEGER DEFAULT NULL")
+        _migar_coluna(cursor, "connections", "localizacao", "VARCHAR DEFAULT 'teto_parede'")
+        _migar_coluna(cursor, "connections", "circuitos_bloqueados", "VARCHAR DEFAULT '[]'")
+        _migar_coluna(cursor, "connections", "c1_x", "FLOAT DEFAULT NULL")
+        _migar_coluna(cursor, "connections", "c1_y", "FLOAT DEFAULT NULL")
+        _migar_coluna(cursor, "components", "scale_x", "FLOAT DEFAULT 1.0")
+        _migar_coluna(cursor, "components", "scale_y", "FLOAT DEFAULT 1.0")
+
+        # Migração automática: criar índices para as chaves estrangeiras
+        _criar_indice(cursor, "rooms", "project_id", "idx_rooms_project_id")
+        _criar_indice(cursor, "circuits", "project_id", "idx_circuits_project_id")
+        _criar_indice(cursor, "circuits", "quadro_id", "idx_circuits_quadro_id")
+        _criar_indice(cursor, "components", "project_id", "idx_components_project_id")
+        _criar_indice(cursor, "components", "circuit_id", "idx_components_circuit_id")
+        _criar_indice(cursor, "connections", "project_id", "idx_connections_project_id")
+        _criar_indice(cursor, "connections", "origem_id", "idx_connections_origem_id")
+        _criar_indice(cursor, "connections", "destino_id", "idx_connections_destino_id")
+
+        dbapi_conn.commit()
+        cursor.close()
 
 
 def _migar_coluna(cursor, tabela, coluna, tipo_def):

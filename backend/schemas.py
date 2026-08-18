@@ -8,9 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TipoComponente = Literal[
     # Originais
-    "tomada", "interruptor", "lampada", "quadro",
+    "tomada", "interruptor", "lampada", "quadro", "quadro_parcial",
     # Lâmpadas
-    "lampada_simples", "lampada_arandela", "lampada_spot", "lampada_tubular", "lampada_led", "lampada_led_fita", "lampada_pendente",
+    "lampada_simples", "lampada_arandela", "lampada_spot", "lampada_tubular", "lampada_led", "lampada_led_fita", "lampada_pendente", "lampada_jardim",
     # Tomadas
     "tomada_baixa", "tomada_media", "tomada_alta", "tomada_trifasica", "tomada_sensor", "tomada_dupla", "tomada_tripla",
     # Comunicações
@@ -59,11 +59,13 @@ class RoomOut(BaseModel):
 # ---------- Circuit ----------
 class CircuitCreate(BaseModel):
     nome: str
+    numero: Optional[int] = None
     fase: TipoFase = "monofasico"
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
     temperatura_c: float = 30.0
     queda_tensao_max_pct: float = 4.0
+    quadro_id: Optional[int] = None
 
 
 class CircuitOut(BaseModel):
@@ -71,20 +73,24 @@ class CircuitOut(BaseModel):
     id: int
     project_id: int
     nome: str
+    numero: Optional[int] = None
     fase: TipoFase
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
     temperatura_c: float = 30.0
     queda_tensao_max_pct: float = 4.0
+    quadro_id: Optional[int] = None
 
 
 class CircuitUpdate(BaseModel):
     nome: Optional[str] = None
+    numero: Optional[int] = None
     fase: Optional[TipoFase] = None
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
     temperatura_c: Optional[float] = None
     queda_tensao_max_pct: Optional[float] = None
+    quadro_id: Optional[int] = None
 
 
 # ---------- Component ----------
@@ -109,6 +115,11 @@ class ComponentUpdate(BaseModel):
     potencia_w: Optional[float] = Field(default=None, ge=0)
     rotulo: Optional[str] = None
     circuit_id: Optional[int] = None
+
+
+class ComponentBatchUpdate(BaseModel):
+    ids: List[int]
+    dados: ComponentUpdate
 
 
 class ComponentOut(BaseModel):
@@ -171,3 +182,26 @@ class ConnectionUpdate(BaseModel):
 # ---------- Batch Delete ----------
 class BatchDeleteRequest(BaseModel):
     ids: List[int]
+
+
+# ---------- Exportação PDF ----------
+class ExportPdfRequest(BaseModel):
+    formato: Literal["A4", "A3"] = "A4"
+    nome_projeto: Optional[str] = None
+    autor: Optional[str] = "Electrilal"
+    data: Optional[str] = None
+    escala_manual: Optional[str] = None
+    numero_folha: int = Field(default=1, ge=1)
+    notas: Optional[str] = None
+    incluir_unifilar: bool = True
+
+    @field_validator("data")
+    @classmethod
+    def validar_data_pdf(cls, valor):
+        if valor is None or valor == "":
+            return valor
+        try:
+            datetime.strptime(valor, "%d/%m/%Y")
+        except ValueError as erro:
+            raise ValueError("A data deve estar no formato DD/MM/AAAA.") from erro
+        return valor

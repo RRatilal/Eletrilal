@@ -8,6 +8,7 @@ import Sidebar from "./components/Sidebar/Sidebar";
 import BottomToolbar from "./components/BottomToolbar/BottomToolbar";
 import PdfImporter from "./components/PdfImporter/PdfImporter";
 import PdfToDxf from "./components/PdfToDxf/PdfToDxf";
+import ExportPdfModal from "./components/ExportPdf/ExportPdfModal";
 import Canvas3D from "./components/Canvas/Canvas3D";
 import { ToastProvider, useToast } from "./components/Toast/Toast";
 import { ThemeProvider } from "./hooks/ThemeContext";
@@ -31,7 +32,7 @@ function HomeScreen({ projetos, erro, novoNome, setNovoNome, criarProjeto, abrir
         <div className="home-logo">
           <div className="home-logo-icon">⚡</div>
         </div>
-        <h1>Electrilal</h1>
+        <h1>Electri<span className="accent">lal</span></h1>
         <p className="subtitle">Sistema de projeto elétrico — uso local</p>
       </div>
 
@@ -105,8 +106,10 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
   const [modoFitaLed, setModoFitaLed] = useState(false);
   const [pdfImporterAberto, setPdfImporterAberto] = useState(false);
   const [pdfToDxfAberto, setPdfToDxfAberto] = useState(false);
+  const [exportPdfAberto, setExportPdfAberto] = useState(false);
   const [modo3D, setModo3D] = useState(false);
   const [gridVisivel, setGridVisivel] = useState(true);
+  const [fiacaoVisivel, setFiacaoVisivel] = useState(false);
   const [canvasInstance, setCanvasInstance] = useState(null);
   const [canvasRefs, setCanvasRefs] = useState(null);
 
@@ -117,12 +120,12 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
   const floorPlanPositionRef = useRef({ left: 0, top: 0 });
 
   // ─── Autosave (guarda estado quando o projeto está ativo) ────────────────
-  const autosaveData = {
+  const autosaveData = React.useMemo(() => ({
     componentes, circuitos, conexoes, rooms,
     floorPlanModifications,
     floorPlanPosition: floorPlanPositionRef.current,
     plantaTravada,
-  };
+  }), [componentes, circuitos, conexoes, rooms, floorPlanModifications, plantaTravada]);
   const { estado: autosaveEstado, carregar: carregarAutosave } = useAutosave(projeto?.id, autosaveData);
 
   // ─── Restaurar autosave quando o projeto abre ────────────────────────────
@@ -142,9 +145,11 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
   const {
     electricalData, setElectricalData,
     atualizarNoCanvas, limparSelecao, selectedComponentId,
+    selectedComponentIds, isMultiSelection,
   } = useCanvasIntegration(canvasInstance);
 
   const selectedComponent = componentes.find((c) => c.id === selectedComponentId) || null;
+  const selectedComponents = componentes.filter((c) => selectedComponentIds.includes(c.id));
 
   // ─── Floor Plan Tools ────────────────────────────────────────────────────
   const handleFloorPlanModified = useCallback((modState) => {
@@ -183,6 +188,8 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
     setCanvasRefs({
       exportarPNG: payload.exportarPNG,
       exportarSVG: payload.exportarSVG,
+      carregarFiacao: payload.carregarFiacao,
+      ocultarFiacao: payload.ocultarFiacao,
       toggleFloorPlanLock: payload.toggleFloorPlanLock,
       geometriaRef: payload.geometriaRef,
       floorPlanGroupRef: payload.floorPlanGroupRef,
@@ -213,6 +220,23 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
       toast.warning("Canvas 2D não disponível.");
     }
   }, [canvasRefs, canvasInstance, toast]);
+
+  // ─── Handlers: Fiação dos eletrodutos ───────────────────────────────────
+  const handleToggleFiacao = useCallback(async () => {
+    if (!projeto?.id) return;
+    if (fiacaoVisivel) {
+      canvasRefs?.ocultarFiacao?.();
+      setFiacaoVisivel(false);
+      return;
+    }
+    const ok = await canvasRefs?.carregarFiacao?.(projeto.id, api);
+    if (ok) {
+      setFiacaoVisivel(true);
+      toast.success("Fiação dos eletrodutos mostrada");
+    } else {
+      toast.error("Não foi possível carregar a fiação dos eletrodutos.");
+    }
+  }, [projeto?.id, fiacaoVisivel, canvasRefs, toast]);
 
   // ─── Handlers: Componentes ──────────────────────────────────────────────
   function handleComponenteCriado(novo) {
@@ -349,10 +373,13 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
         modoFitaLed={modoFitaLed}
         onToggleModoFitaLed={() => setModoFitaLed((v) => !v)}
         modo3D={modo3D}
-        onToggleModo3D={() => { setModo3D((v) => !v); setModoCabo(false); setModoFitaLed(false); }}
+        onToggleModo3D={() => { setModo3D((v) => !v); setModoCabo(false); setModoFitaLed(false); setFiacaoVisivel(false); }}
         gridVisivel={gridVisivel}
         onToggleGrid={() => setGridVisivel((v) => !v)}
+        fiacaoVisivel={fiacaoVisivel}
+        onToggleFiacao={handleToggleFiacao}
         onExportarPNG={exportarCanvasPNG}
+        onExportarPDF={() => setExportPdfAberto(true)}
       />
 
       {!modo3D && <ComponentToolbar onCriarRoom={handleCriarRoom} />}
@@ -362,6 +389,9 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
       )}
       {pdfToDxfAberto && (
         <PdfToDxf projectId={projeto.id} onGeometriaImportada={(geo) => { setGeometria(geo); setFloorPlanModifications(null); toast.success("Geometria DXF importada"); }} onClose={() => setPdfToDxfAberto(false)} />
+      )}
+      {exportPdfAberto && (
+        <ExportPdfModal projeto={projeto} onClose={() => setExportPdfAberto(false)} />
       )}
 
       {modo3D ? (
@@ -385,20 +415,26 @@ function Editor({ projeto, geometria, setGeometria, componentes, setComponentes,
         <>
           <CircuitosPanel
             aberto={painelDireitoAberto && electricalData === null && !activeTool}
-            projectId={projeto.id} componentes={componentes} circuitos={circuitos} conexoes={conexoes}
+            projectId={projeto.id} componentes={componentes} circuitos={circuitos}
             onCircuitoCriado={handleCircuitoCriado} onCircuitoAtualizado={handleCircuitoAtualizado}
             onCircuitoApagado={handleCircuitoApagado} onComponenteAtualizado={handleComponenteAtualizado}
-            onConexaoAtualizada={handleConexaoAtualizada}
             onRefreshData={handleRefreshData}
           />
           <PropertiesPanel
             aberto={painelDireitoAberto && electricalData !== null && electricalData.type !== "floorplan" && !activeTool}
             componente={selectedComponent}
+            selectedComponents={selectedComponents}
+            selectedComponentIds={selectedComponentIds}
+            isMultiSelection={isMultiSelection}
+            componentes={componentes}
             conexao={conexoes.find((c) => c.id === (electricalData?.type === "conduto" ? electricalData.connectionId : null)) || null}
             circuitos={circuitos} onComponenteAtualizado={handleComponenteAtualizado}
+            onComponenteApagado={handleComponenteApagado}
             onConexaoAtualizada={handleConexaoAtualizada}
             electricalData={electricalData} setElectricalData={setElectricalData}
             atualizarNoCanvas={atualizarNoCanvas} canvasInstance={canvasInstance}
+            limparSelecao={limparSelecao}
+            onRefreshData={handleRefreshData}
           />
           <BottomToolbar
             onZoomIn={() => { if (!canvasInstance) return; const c = canvasInstance.getCenterPoint(); let z = canvasInstance.getZoom(); z = Math.min(z * 1.3, 20); canvasInstance.zoomToPoint(c, z); canvasInstance.renderAll(); setZoomNivel(z); }}

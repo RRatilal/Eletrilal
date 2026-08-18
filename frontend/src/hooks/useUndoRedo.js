@@ -16,7 +16,7 @@ export function useUndoRedo(maxHistorico = 50) {
 
   /** Grava um snapshot do estado atual. Chamar antes de cada ação. */
   const gravar = useCallback((snapshot) => {
-    undoStackRef.current.push(JSON.stringify(snapshot));
+    undoStackRef.current.push(structuredClone(snapshot));
     // Limita o tamanho do histórico
     if (undoStackRef.current.length > maxHistorico) {
       undoStackRef.current.shift();
@@ -29,20 +29,20 @@ export function useUndoRedo(maxHistorico = 50) {
   const desfazer = useCallback((snapshotAtual) => {
     if (undoStackRef.current.length === 0) return null;
     // Guarda o estado atual no redo
-    redoStackRef.current.push(JSON.stringify(snapshotAtual));
+    redoStackRef.current.push(structuredClone(snapshotAtual));
     // Retira o último do undo
     const anterior = undoStackRef.current.pop();
-    return JSON.parse(anterior);
+    return anterior;
   }, []);
 
   /** Refaz a última ação desfeita: retorna o snapshot seguinte ou null. */
   const refazer = useCallback((snapshotAtual) => {
     if (redoStackRef.current.length === 0) return null;
     // Guarda o estado atual no undo
-    undoStackRef.current.push(JSON.stringify(snapshotAtual));
+    undoStackRef.current.push(structuredClone(snapshotAtual));
     // Retira o último do redo
     const seguinte = redoStackRef.current.pop();
-    return JSON.parse(seguinte);
+    return seguinte;
   }, []);
 
   const podeDesfazer = () => undoStackRef.current.length > 0;

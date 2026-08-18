@@ -37,7 +37,10 @@ export default function Toolbar({
   onToggleModo3D,
   gridVisivel,
   onToggleGrid,
+  fiacaoVisivel,
+  onToggleFiacao,
   onExportarPNG,
+  onExportarPDF,
 }) {
   const inputRef = useRef(null);
   const panelRef = useRef(null);
@@ -256,6 +259,15 @@ export default function Toolbar({
             <span className="panel-tool-icon">{gridVisivel ? "▦" : "▢"}</span>
             <span className="panel-tool-label">Grelha</span>
           </button>
+          <button
+            className={`panel-tool-btn ${fiacaoVisivel ? "active" : ""}`}
+            onClick={onToggleFiacao}
+            disabled={!projeto || modo3D}
+            title={fiacaoVisivel ? "Ocultar fiação dos eletrodutos" : "Mostrar fiação dos eletrodutos (chicote de condutores)"}
+          >
+            <span className="panel-tool-icon">≡</span>
+            <span className="panel-tool-label">Fiação</span>
+          </button>
         </div>
 
         <div className="panel-divider" />
@@ -278,6 +290,15 @@ export default function Toolbar({
           >
             <span className="panel-tool-icon">💾</span>
             <span className="panel-tool-label">Exportar DXF</span>
+          </button>
+          <button
+            className="panel-tool-btn panel-tool-btn-pdf"
+            onClick={onExportarPDF}
+            disabled={!projeto}
+            title="Gerar folha técnica vectorial em PDF"
+          >
+            <span className="panel-tool-icon">▤</span>
+            <span className="panel-tool-label">Exportar PDF</span>
           </button>
           <button
             className="panel-tool-btn"

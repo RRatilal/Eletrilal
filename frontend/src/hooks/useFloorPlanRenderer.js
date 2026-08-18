@@ -4,7 +4,7 @@
  *
  * Depende de: useMagneticSnap (ESCALA_PX_POR_METRO, indexarLinhasGeometria)
  */
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import * as fabric from "fabric";
 import { ESCALA_PX_POR_METRO, indexarLinhasGeometria } from "./useMagneticSnap";
 import { criarElectricalData } from "./useCanvasIntegration";
@@ -17,7 +17,7 @@ const CORES_SIMBOLOS = {
   passagem: "#8b5cf6",
   interruptor: "#22c55e",
   quadro: "#ef4444",
-  outro: "#6366f1",
+  outro: "#ffa62b",
 };
 
 const LIMITE_OBJETOS_INDIVIDUAIS = 2000;
@@ -68,6 +68,12 @@ function obterFormasDoSimbolo(tipo, cor) {
     } else if (tipo === "lampada_led_fita") {
       // Símbolo simplificado: um pequeno traço tracejado para representar fita LED
       shapes.push(new fabric.Line([-10, 0, 10, 0], { stroke: cor, strokeWidth: 3, strokeDashArray: [3, 4], originX: "center", originY: "center" }));
+    } else if (tipo === "lampada_jardim") {
+      // LED de jardim: espeto + seta a apontar para cima (luz ascendente)
+      shapes.push(new fabric.Circle({ radius: 6, fill: "transparent", stroke: cor, strokeWidth: 1.5, originX: "center", originY: "center" }));
+      shapes.push(new fabric.Line([0, 6, 0, -6], { stroke: cor, strokeWidth: 1.5, originX: "center", originY: "center" }));
+      shapes.push(new fabric.Triangle({ width: 10, height: 10, fill: "transparent", stroke: cor, strokeWidth: 1.5, originX: "center", originY: "center", top: -12 }));
+      shapes.push(new fabric.Line([0, -7, 0, -12], { stroke: cor, strokeWidth: 1.5, originX: "center", originY: "center" }));
     } else {
       shapes.push(new fabric.Circle({ radius: 10, fill: "transparent", stroke: cor, strokeWidth: 1.5, originX: "center", originY: "center" }));
     }
@@ -189,10 +195,17 @@ function obterFormasDoSimbolo(tipo, cor) {
     }
   }
 
-  // ─── QUADRO GERAL ──────────────────────────────────────
-  else if (tipo === "quadro") {
-    shapes.push(new fabric.Rect({ width: 22, height: 14, fill: "transparent", stroke: cor, strokeWidth: 2, originX: "center", originY: "center" }));
-    shapes.push(new fabric.Path("M -2 -5 L -5 1 L 0 1 L 2 5 L 5 -1 L 0 -1 Z", { fill: cor, stroke: "transparent", originX: "center", originY: "center" }));
+  // ─── QUADRO GERAL E PARCIAL ───────────────────────────
+  else if (tipo === "quadro" || tipo === "quadro_parcial") {
+    const isParcial = tipo === "quadro_parcial";
+    const qCor = isParcial ? "#f97316" : cor;
+    shapes.push(new fabric.Rect({ width: 24, height: 16, fill: "rgba(0,0,0,0.001)", stroke: qCor, strokeWidth: 2, originX: "center", originY: "center" }));
+    if (isParcial) {
+      shapes.push(new fabric.Path("M -12 8 L 12 -8", { stroke: qCor, strokeWidth: 1.5, originX: "center", originY: "center" }));
+      shapes.push(new fabric.Path("M -2 -5 L -5 1 L 0 1 L 2 5 L 5 -1 L 0 -1 Z", { fill: qCor, stroke: "transparent", originX: "center", originY: "center" }));
+    } else {
+      shapes.push(new fabric.Path("M -2 -5 L -5 1 L 0 1 L 2 5 L 5 -1 L 0 -1 Z", { fill: qCor, stroke: "transparent", originX: "center", originY: "center" }));
+    }
   }
 
   // ─── FALLBACK ────────────────────────────────────────
@@ -219,21 +232,9 @@ function obterFormasDoSimbolo(tipo, cor) {
     else if (["telefonia", "dados", "tv", "campainha", "camera"].includes(tipo)) categoria = "telecom";
     else if (tipo.startsWith("caixa_passagem")) categoria = "passagem";
     else if (tipo.startsWith("interruptor")) categoria = "interruptor";
-    else if (tipo === "quadro") categoria = "quadro";
+    else if (tipo.startsWith("quadro")) categoria = "quadro";
 
     const cor = CORES_SIMBOLOS[categoria] || CORES_SIMBOLOS.outro;
-
-    // Glow suave — sem glow para interruptores
-    const usarGlow = categoria !== "interruptor";
-    const glow = usarGlow
-      ? new fabric.Circle({
-          radius: categoria === "lampada" && (tipo === "lampada" || tipo === "lampada_simples") ? 22 : 12,
-          fill: cor + "15",
-          stroke: "transparent",
-          originX: "center",
-          originY: "center",
-        })
-      : null;
 
     // ─── Comando inicial ──────────────────────────────────────────────────
     const comandoInicial = (() => {
@@ -288,10 +289,13 @@ function obterFormasDoSimbolo(tipo, cor) {
 
     let grupoCompleto;
 
+    // O próprio símbolo define os limites da seleção. Não adicionar uma área
+    // transparente auxiliar: ela torna a caixa de seleção maior do que o desenho.
+
     // ─── Símbolo de lâmpada especializado ─────────────────────────────────
     if (categoria === "lampada" && (tipo === "lampada" || tipo === "lampada_simples")) {
       const lampGroup = createLampSymbol(electricalData);
-      const children = glow ? [glow, lampGroup] : [lampGroup];
+      const children = [lampGroup];
       grupoCompleto = new fabric.Group(children, {
         left: componente.x * ESCALA_PX_POR_METRO,
         top: -componente.y * ESCALA_PX_POR_METRO,
@@ -300,20 +304,25 @@ function obterFormasDoSimbolo(tipo, cor) {
         angle,
         originX: "center",
         originY: "center",
-        cornerColor: "#6366f1",
-        cornerStrokeColor: "#6366f1",
-        borderColor: "#6366f180",
+        cornerColor: "#ffa62b", cornerStrokeColor: "#ffa62b", borderColor: "#ffa62b80",
         cornerSize: 7,
         cornerStyle: "circle",
         transparentCorners: false,
-        padding: 4,
+        padding: 0,
+        selectable: true,
+        evented: true,
+        subTargetCheck: false,
+        hoverCursor: "pointer",
+        hasControls: true,
+        hasBorders: true,
+        lockRotation: false,
       });
     }
 
     // ─── Caixa de passagem especializada ────────────────────────────────────
     else if (categoria === "passagem" && tipo === "caixa_passagem") {
       const passagemGroup = createCaixaPassagemSymbol(electricalData);
-      const children = glow ? [glow, passagemGroup] : [passagemGroup];
+      const children = [passagemGroup];
       grupoCompleto = new fabric.Group(children, {
         left: componente.x * ESCALA_PX_POR_METRO,
         top: -componente.y * ESCALA_PX_POR_METRO,
@@ -322,13 +331,18 @@ function obterFormasDoSimbolo(tipo, cor) {
         angle,
         originX: "center",
         originY: "center",
-        cornerColor: "#6366f1",
-        cornerStrokeColor: "#6366f1",
-        borderColor: "#6366f180",
+        cornerColor: "#ffa62b", cornerStrokeColor: "#ffa62b", borderColor: "#ffa62b80",
         cornerSize: 7,
         cornerStyle: "rect",
         transparentCorners: false,
-        padding: 4,
+        padding: 0,
+        selectable: true,
+        evented: true,
+        subTargetCheck: false,
+        hoverCursor: "pointer",
+        hasControls: true,
+        hasBorders: true,
+        lockRotation: false,
       });
     }
 
@@ -370,8 +384,8 @@ function obterFormasDoSimbolo(tipo, cor) {
         symbolShapes.push(label);
       }
 
-      // Labels de texto visíveis no canvas (exceto interruptores)
-      if (categoria !== "interruptor") {
+      // Labels de texto visíveis no canvas (exceto interruptores e quadros)
+      if (categoria !== "interruptor" && categoria !== "quadro") {
         // Labels padrão para lâmpadas, tomadas, etc.
         if (electricalData.circuito?.value) {
           addLabel("circuito", -6);
@@ -387,7 +401,7 @@ function obterFormasDoSimbolo(tipo, cor) {
         }
       }
 
-      const children = glow ? [glow, ...symbolShapes] : [...symbolShapes];
+      const children = symbolShapes;
       grupoCompleto = new fabric.Group(children, {
         left: componente.x * ESCALA_PX_POR_METRO,
         top: -componente.y * ESCALA_PX_POR_METRO,
@@ -396,15 +410,15 @@ function obterFormasDoSimbolo(tipo, cor) {
         angle,
         originX: "center",
         originY: "center",
-        cornerColor: "#6366f1",
-        cornerStrokeColor: "#6366f1",
-        borderColor: "#6366f180",
+        cornerColor: "#ffa62b", cornerStrokeColor: "#ffa62b", borderColor: "#ffa62b80",
         cornerSize: 7,
         cornerStyle: "circle",
         transparentCorners: false,
-        padding: 4,
+        padding: 0,
         selectable: true,
         evented: true,
+        subTargetCheck: false,
+        hoverCursor: "pointer",
         hasControls: true,
         hasBorders: true,
         lockRotation: false,
@@ -464,7 +478,7 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
       return _desenharGeometriaAgrupada(geometria, totalObjetos, canvas);
     } else {
       floorPlanModeRef.current = "individual";
-      geometriaRef.current = JSON.parse(JSON.stringify(geometria));
+      geometriaRef.current = structuredClone(geometria);
       return _desenharGeometriaIndividual(geometria, totalObjetos, canvas);
     }
   }, [fabricCanvasRef, geometriaRef, floorPlanGroupRef, floorPlanScaleRef, floorPlanClipRectRef, floorPlanModeRef, wallLinesSpatialGridRef]);
@@ -510,7 +524,7 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
 
     const grupo = new fabric.Group(dxfObjects, {
       selectable: true, evented: true, hoverCursor: "pointer",
-      cornerColor: "#6366f1", cornerStrokeColor: "#6366f1", borderColor: "#6366f180",
+      cornerColor: "#ffa62b", cornerStrokeColor: "#ffa62b", borderColor: "#ffa62b80",
       cornerSize: 7, cornerStyle: "circle", transparentCorners: false, padding: 2,
     });
     grupo.electricalData = { type: "floorplan" };
@@ -572,7 +586,7 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
       left: minX, top: minY, width: bboxWidth, height: bboxHeight,
       fill: "rgba(0,0,0,0.005)", stroke: "transparent",
       selectable: true, evented: true, hoverCursor: "pointer",
-      cornerColor: "#6366f1", cornerStrokeColor: "#6366f1", borderColor: "#6366f180",
+      cornerColor: "#ffa62b", cornerStrokeColor: "#ffa62b", borderColor: "#ffa62b80",
       cornerSize: 7, cornerStyle: "circle", transparentCorners: false, padding: 2,
     });
     invisRect._floorPlanInitialLeft = minX;
@@ -584,6 +598,20 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
     return { modo: "agrupado", totalObjetos };
   }
 
+  const componentObjectsMapRef = useRef(new Map());
+  const connectionObjectsMapRef = useRef(new Map());
+
+  const registrarConexaoNoMap = (origemId, destinoId, pathObj) => {
+    if (!connectionObjectsMapRef.current.has(origemId)) {
+      connectionObjectsMapRef.current.set(origemId, new Set());
+    }
+    if (!connectionObjectsMapRef.current.has(destinoId)) {
+      connectionObjectsMapRef.current.set(destinoId, new Set());
+    }
+    connectionObjectsMapRef.current.get(origemId).add(pathObj);
+    connectionObjectsMapRef.current.get(destinoId).add(pathObj);
+  };
+
   /**
    * Desenha um componente elétrico no canvas.
    * Anexa evento 'moving' para atualizar conexões em tempo real.
@@ -592,6 +620,8 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
     const canvas = fabricCanvasRef.current;
     if (!canvas) return null;
     const grupo = criarGrupoComponente(componente, onModified);
+    componentObjectsMapRef.current.set(componente.id, grupo);
+
     // Atualizar conexões em tempo real durante o arraste
     grupo.on("moving", () => {
       atualizarLinhasDoComponente(componente.id, grupo.left, grupo.top);
@@ -602,55 +632,69 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
 
   /**
    * Atualiza as coordenadas dos paths ligados a um componente específico em tempo real durante o arraste.
+   * Utiliza connectionObjectsMapRef para lookup O(1) e evita alocações desnecessárias.
    */
   function atualizarLinhasDoComponente(componentId, left, top) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    canvas.getObjects().forEach((obj) => {
-      if (obj.data?.isConnection || obj.data?.isConnectionGlow) {
-        if (obj.data.origemId === componentId || obj.data.destinoId === componentId) {
-          const pathArr = obj.path;
-          if (!pathArr || pathArr.length < 2) return;
+    const conexoesDoComp = connectionObjectsMapRef.current.get(componentId);
+    if (!conexoesDoComp || conexoesDoComp.size === 0) return;
 
-          let origX = pathArr[0][1];
-          let origY = pathArr[0][2];
+    conexoesDoComp.forEach((obj) => {
+      const pathArr = obj.path;
+      if (!pathArr || pathArr.length < 2) return;
 
-          const lastIdx = pathArr.length - 1;
-          const targetCmd = pathArr[lastIdx];
-          let destX = targetCmd[0] === "Q" ? targetCmd[3] : targetCmd[1];
-          let destY = targetCmd[0] === "Q" ? targetCmd[4] : targetCmd[2];
+      let origX = pathArr[0][1];
+      let origY = pathArr[0][2];
 
-          if (obj.data.origemId === componentId) {
-            origX = left;
-            origY = top;
-          }
-          if (obj.data.destinoId === componentId) {
-            destX = left;
-            destY = top;
-          }
+      const lastIdx = pathArr.length - 1;
+      const targetCmd = pathArr[lastIdx];
+      let destX = targetCmd[0] === "Q" ? targetCmd[3] : targetCmd[1];
+      let destY = targetCmd[0] === "Q" ? targetCmd[4] : targetCmd[2];
 
-          let newPathStr;
-          if (targetCmd[0] === "Q") {
-            const hx = targetCmd[1];
-            const hy = targetCmd[2];
-            newPathStr = `M ${origX} ${origY} Q ${hx} ${hy} ${destX} ${destY}`;
-          } else {
-            newPathStr = `M ${origX} ${origY} L ${destX} ${destY}`;
-          }
-
-          const tempPath = new fabric.Path(newPathStr);
-          obj.set({
-            path: tempPath.path,
-            left: tempPath.left,
-            top: tempPath.top,
-            width: tempPath.width,
-            height: tempPath.height,
-            pathOffset: tempPath.pathOffset,
-          });
-          obj.setCoords();
-        }
+      if (obj.data.origemId === componentId) {
+        origX = left;
+        origY = top;
       }
+      if (obj.data.destinoId === componentId) {
+        destX = left;
+        destY = top;
+      }
+
+      let minX, maxX, minY, maxY;
+      if (targetCmd[0] === "Q") {
+        const hx = targetCmd[1];
+        const hy = targetCmd[2];
+        pathArr[0][1] = origX;
+        pathArr[0][2] = origY;
+        pathArr[lastIdx][3] = destX;
+        pathArr[lastIdx][4] = destY;
+        minX = Math.min(origX, destX, hx);
+        maxX = Math.max(origX, destX, hx);
+        minY = Math.min(origY, destY, hy);
+        maxY = Math.max(origY, destY, hy);
+      } else {
+        pathArr[0][1] = origX;
+        pathArr[0][2] = origY;
+        pathArr[1][1] = destX;
+        pathArr[1][2] = destY;
+        minX = Math.min(origX, destX);
+        maxX = Math.max(origX, destX);
+        minY = Math.min(origY, destY);
+        maxY = Math.max(origY, destY);
+      }
+
+      const w = Math.max(maxX - minX, 1);
+      const h = Math.max(maxY - minY, 1);
+      obj.set({
+        left: minX,
+        top: minY,
+        width: w,
+        height: h,
+        pathOffset: new fabric.Point(w / 2, h / 2),
+      });
+      obj.setCoords();
     });
     canvas.requestRenderAll();
   }
@@ -682,13 +726,20 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
     const isSubterraneo = conexao.localizacao === "subterraneo";
     const strokeDashArray = isSubterraneo ? [8, 4] : null;
 
-    // Hit-target transparente por trás para facilitar seleção de condutos estreitos
+    // Hit-target transparente para facilitar seleção de condutos estreitos.
+    // perPixelTargetFind: hit-testing por PIXEL do traço (14px), sem bounding box
+    // retangular — resolve o problema de clicar num conduto e selecionar outro
+    // quando os bounding boxes de condutos próximos/cruzados se sobrepõem.
     const glowPath = new fabric.Path(pathData, {
-      stroke: "rgba(0, 0, 0, 0.001)",
+      stroke: "rgba(0, 0, 0, 0.02)", // alpha > 0 (margem segura) para o teste de pixel funcionar
       strokeWidth: 14,
       fill: "transparent",
-      selectable: false,
-      evented: false,
+      selectable: true,
+      evented: true,
+      perPixelTargetFind: true,
+      hasBorders: false,
+      hasControls: false,
+      hoverCursor: "pointer",
     });
     glowPath.data = {
       isConnectionGlow: true,
@@ -696,6 +747,17 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
       origemId: conexao.origem_id,
       destinoId: conexao.destino_id,
     };
+
+    // Delegação: clicar no glow seleciona o conduto visível real (pathObj)
+    glowPath.on("selected", () => {
+      const realPath = canvas.getObjects().find(
+        (o) => o.data?.isConnection && o.data.connectionId === glowPath.data.connectionId
+      );
+      if (realPath && realPath !== glowPath) {
+        canvas.setActiveObject(realPath);
+        canvas.requestRenderAll();
+      }
+    });
 
     // Objeto Path principal do conduto
     const pathObj = new fabric.Path(pathData, {
@@ -705,6 +767,9 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
       fill: "transparent",
       selectable: true,
       evented: true,
+      // Hit-testing por pixel: só o traço real (3px) é clicável, nunca o
+      // bounding box retangular — condutos cruzados não roubam cliques
+      perPixelTargetFind: true,
       hoverCursor: "pointer",
       hasBorders: false,
       hasControls: false,
@@ -748,6 +813,9 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
     canvas.add(pathObj);
     canvas.sendObjectToBack(glowPath);
     canvas.sendObjectToBack(pathObj);
+
+    registrarConexaoNoMap(conexao.origem_id, conexao.destino_id, pathObj);
+    if (glowPath) registrarConexaoNoMap(conexao.origem_id, conexao.destino_id, glowPath);
 
     return pathObj;
   }, [fabricCanvasRef]);
@@ -836,6 +904,7 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
           c1_y: con.c1_y,
         };
         existing.line.setCoords();
+        registrarConexaoNoMap(con.origem_id, con.destino_id, existing.line);
 
         if (existing.glow) {
           existing.glow.set({
@@ -847,6 +916,7 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
             pathOffset: tempPath.pathOffset,
           });
           existing.glow.setCoords();
+          registrarConexaoNoMap(con.origem_id, con.destino_id, existing.glow);
         }
 
         // Garantir ordem z
@@ -862,13 +932,9 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
   }, [fabricCanvasRef, desenharConexao]);
 
   /**
-   * Encontra um componente no ponto do canvas.
+   * Encontra um componente no ponto do canvas utilizando a Map indexada componentObjectsMapRef.
    */
   const encontrarComponenteEm = useCallback((pointer, optTarget = null) => {
-    const canvas = fabricCanvasRef.current;
-    if (!canvas) return null;
-
-    // Se o alvo tiver componentId, retornar imediatamente
     if (optTarget && optTarget.data?.componentId) {
       return optTarget.data.componentId;
     }
@@ -876,22 +942,19 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
       return optTarget.group.data.componentId;
     }
 
-    // Procurar objetos no ponto
-    const objetos = canvas.getObjects().filter((o) => o.data?.componentId);
     const ponto = new fabric.Point(pointer.x, pointer.y);
-    for (const obj of objetos) {
+    for (const [id, obj] of componentObjectsMapRef.current.entries()) {
       if (obj.containsPoint && obj.containsPoint(ponto)) {
-        return obj.data.componentId;
+        return id;
       }
-      // Verificar bounding box
       const bounds = obj.getBoundingRect();
       if (pointer.x >= bounds.left && pointer.x <= bounds.left + bounds.width &&
           pointer.y >= bounds.top && pointer.y <= bounds.top + bounds.height) {
-        return obj.data.componentId;
+        return id;
       }
     }
     return null;
-  }, [fabricCanvasRef]);
+  }, []);
 
   /**
    * Desenha uma divisão (room) como retângulo semi-transparente no canvas.
@@ -928,9 +991,9 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
       stroke: "rgba(59, 130, 246, 0.3)",
       strokeWidth: 1.5,
       strokeDashArray: [5, 5],
-      cornerColor: "#6366f1",
-      cornerStrokeColor: "#6366f1",
-      borderColor: "#6366f180",
+      cornerColor: "#ffa62b",
+      cornerStrokeColor: "#ffa62b",
+      borderColor: "#ffa62b80",
       cornerSize: 6,
       cornerStyle: "circle",
       transparentCorners: false,
@@ -944,7 +1007,7 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
     // Adicionar label
     const label = new fabric.Text(room.nome || "Divisão", {
       fontSize: 12,
-      fill: "#6366f1",
+      fill: "#ffa62b",
       fontWeight: "bold",
       originX: "center",
       originY: "center",
@@ -975,6 +1038,8 @@ export function useFloorPlanRenderer(fabricCanvasRef, geometriaRef, floorPlanGro
       try { return getComputedStyle(document.documentElement).getPropertyValue("--bg-canvas").trim() || "#e8ecf0"; }
       catch { return "#e8ecf0"; }
     })();
+    componentObjectsMapRef.current.clear();
+    connectionObjectsMapRef.current.clear();
     geometriaRef.current = null;
     floorPlanGroupRef.current = null;
     floorPlanScaleRef.current = 1;

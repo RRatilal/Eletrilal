@@ -171,3 +171,9 @@ frontend/src/
 | DXF I/O | `backend/dxf_parser.py`, `backend/routers/export.py` |
 | PDF plants | `backend/pdf_plant_builder.py`, `backend/pdf_to_dxf.py` |
 | Recent feature history | `CHANGELOG.md` |
+
+## Performance & Otimização 3D (Three.js)
+
+- **Pooling de Luzes (`PointLight`)**: Limitar a criação de `PointLight`s dinâmicas na GPU a um máximo de 8–12 luzes ativas em simultâneo (apenas para lâmpadas acesas). Lâmpadas desligadas usam apenas materiais emissivos e Sprites de brilho visual sem alocar luzes ponto na GPU.
+- **Batching com `InstancedMesh`**: Todos os componentes elétricos (tomadas, interruptores, lâmpadas, caixas) devem ser renderizados via `InstancedMesh` por grupo de tipo para minimizar draw calls.
+- **Navegação em 1ª Pessoa**: Posicionar a câmara inicial a 3.5m por fora do perímetro da habitação (`floorMaxZ + 3.5`), a 1.65m de altura dos olhos, com colisão baseada na distância raio-parede ($R = 0.35\text{ m}$).

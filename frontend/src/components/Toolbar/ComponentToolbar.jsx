@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   IconRenderer,
   IconLampada, IconLampadaArandela, IconLampadaSpot,
-  IconLampadaTubular, IconLampadaLed, IconLampadaPendente,
+  IconLampadaTubular, IconLampadaLed, IconLampadaPendente, IconLampadaJardim,
   IconTomada, IconTomadaMedia, IconTomadaAlta,
   IconTomadaTrifasica, IconTomadaSensor, IconTomadaDupla, IconTomadaTripla,
   IconTelefonia, IconDados, IconTv, IconCampainha, IconCamera,
@@ -11,7 +11,7 @@ import {
   IconInterruptorSimples, IconInterruptorDuplo, IconInterruptorTriplo,
   IconInterruptorIntermediario, IconInterruptorParalelo,
   IconInterruptorDimmer, IconInterruptorPulsador,
-  IconQuadro,
+  IconQuadro, IconQuadroParcial,
 } from "../Icons/ElectricalIcons";
 import "./ComponentToolbar.css";
 
@@ -27,6 +27,7 @@ const CATEGORIAS = [
       { tipo: "lampada_tubular", label: "Lâmpada Tubular", icon: IconLampadaTubular },
       { tipo: "lampada_led", label: "Fita de LED", icon: IconLampadaLed },
       { tipo: "lampada_pendente", label: "Lustre / Pendente", icon: IconLampadaPendente },
+      { tipo: "lampada_jardim", label: "LED Jardim / Espeto", icon: IconLampadaJardim },
     ]
   },
   {
@@ -213,18 +214,32 @@ export default function ComponentToolbar({ onCriarRoom }) {
 
       <div className="toolbar-vertical-divider" />
 
-      {/* ⚡ QUADRO GERAL (Único) */}
+      {/* ⚡ QUADROS (Geral QGBT & Parcial QP) */}
       <div className="toolbar-item-wrapper">
         <div
           className="toolbar-category-btn single-btn"
           draggable
           onDragStart={(e) => handleDragStart(e, "quadro")}
-          title="Arraste o Quadro Geral para o canvas"
+          title="Arraste o Quadro Geral (QGBT) para o canvas"
         >
           <span className="btn-icon">
             <IconRenderer IconComponent={IconQuadro} size={22} />
           </span>
           <span className="btn-label">Quadro Geral</span>
+        </div>
+      </div>
+
+      <div className="toolbar-item-wrapper">
+        <div
+          className="toolbar-category-btn single-btn"
+          draggable
+          onDragStart={(e) => handleDragStart(e, "quadro_parcial")}
+          title="Arraste o Quadro Parcial (ex: Anexo) para o canvas"
+        >
+          <span className="btn-icon">
+            <IconRenderer IconComponent={IconQuadroParcial} size={22} />
+          </span>
+          <span className="btn-label">Quadro Parcial</span>
         </div>
       </div>
 

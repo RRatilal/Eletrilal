@@ -10,9 +10,8 @@
   bottom: var(--space-md);
   width: var(--panel-width);
   background: var(--bg-panel);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-subtle);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), var(--shadow-lg);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   z-index: 50;
@@ -254,7 +253,7 @@
 }
 
 .btn-visibility.visible:hover {
-  background: rgba(99, 102, 241, 0.15);
+  background: rgba(255, 166, 43, 0.2);
   color: var(--accent-primary-hover);
 }
 
@@ -548,7 +547,7 @@
   padding: 6px 8px;
   background: var(--accent-glow);
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(255, 166, 43, 0.25);
 }
 
 .accordion-selection-info {
@@ -748,8 +747,8 @@
 }
 
 .planta-tool-status.crop {
-  background: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  background: rgba(255, 166, 43, 0.14);
+  border: 1px solid rgba(255, 166, 43, 0.36);
   color: var(--accent-primary-hover);
 }
 
@@ -800,9 +799,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;

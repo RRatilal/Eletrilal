@@ -425,8 +425,8 @@ export function useFloorPlanTools({
         const rect = new fabric.Rect({
           left: pt.worldX, top: pt.worldY,
           width: 0, height: 0,
-          fill: activeTool === "crop" ? "rgba(99, 102, 241, 0.15)" : "rgba(239, 68, 68, 0.2)",
-          stroke: activeTool === "crop" ? "rgba(99, 102, 241, 0.8)" : "rgba(239, 68, 68, 0.8)",
+          fill: activeTool === "crop" ? "rgba(255, 166, 43, 0.16)" : "rgba(239, 68, 68, 0.2)",
+          stroke: activeTool === "crop" ? "rgba(255, 166, 43, 0.85)" : "rgba(239, 68, 68, 0.8)",
           strokeWidth: 2 / canvas.getZoom(),
           strokeDashArray: [4 / canvas.getZoom(), 3 / canvas.getZoom()],
           selectable: false, evented: false,

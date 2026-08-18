@@ -109,7 +109,7 @@ def _dimensioning_background(circuit_id: int, db_session_factory):
         db.close()
 
 
-def _compute_dimensioning(circuito, db):
+def _compute_dimensioning(circuito, db, persistir=True):
     """
     Central dimensioning logic — uses IEC 60364 calculateCircuit.
     Returns a dict compatible with the /circuits/{id}/dimensionamento endpoint.
@@ -148,9 +148,10 @@ def _compute_dimensioning(circuito, db):
         queda_tensao_max_pct=queda_max if queda_max and queda_max > 0 else None,
     )
 
-    circuito.disjuntor_amperagem = resultado.breaker_A
-    circuito.cabo_bitola_mm2 = resultado.cableSection_mm2
-    db.commit()
+    if persistir:
+        circuito.disjuntor_amperagem = resultado.breaker_A
+        circuito.cabo_bitola_mm2 = resultado.cableSection_mm2
+        db.commit()
 
     validacao = validator.validar_potencia_circuito(potencia_total)
 
@@ -178,6 +179,11 @@ def _compute_dimensioning(circuito, db):
         "dimensionamento": dimensionamento,
         "avisos_validacao": todos_avisos,
     }
+
+
+def _compute_dimensioning_readonly(circuito, db):
+    """Calcula um circuito para relatórios sem alterar nem confirmar a BD."""
+    return _compute_dimensioning(circuito, db, persistir=False)
 
 
 def _detect_circuit_type(componentes):
@@ -331,20 +337,25 @@ def atualizar_circuito(circuit_id: int, payload: schemas.CircuitUpdate, db: Sess
 
 
 
-def calcular_comprimento_max_circuito(project_id: int, circuit_id: int, db: Session) -> float:
+def calcular_comprimento_max_circuito(
+    project_id: int, circuit_id: int, db: Session,
+    todos_componentes: list = None, conexoes: list = None
+) -> float:
     """Calcula o comprimento máximo de fiação do QDF até qualquer componente do circuito usando o grafo de conexões."""
 
     # 1. Encontra todos os componentes do projeto
-    todos_componentes = db.query(models.Component).filter(models.Component.project_id == project_id).all()
+    if todos_componentes is None:
+        todos_componentes = db.query(models.Component).filter(models.Component.project_id == project_id).all()
     comp_map = {c.id: c for c in todos_componentes}
     
-    # Encontra todos os quadros do projeto (tipo == "quadro")
-    quadros = [c for c in todos_componentes if c.tipo == "quadro"]
+    # Encontra todos os quadros do projeto (tipo == "quadro" ou "quadro_parcial")
+    quadros = [c for c in todos_componentes if c.tipo in ("quadro", "quadro_parcial")]
     if not quadros:
         return 15.0  # Sem quadro: usa comprimento padrão de 15m
         
     # 2. Carrega todas as conexões do projeto
-    conexoes = db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
+    if conexoes is None:
+        conexoes = db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
     
     circ = db.query(models.Circuit).filter(models.Circuit.id == circuit_id).first()
     circ_nome = circ.nome if circ else ""
@@ -415,16 +426,141 @@ def calcular_comprimento_max_circuito(project_id: int, circuit_id: int, db: Sess
     return max(max_dist, 2.0)
 
 
-def calcular_circuitos_agrupados(project_id: int, circuit_id: int, db: Session) -> int:
+def calcular_caminho_circuito(project_id: int, circuit_id: int, db: Session) -> set:
+    """
+    Devolve o conjunto de connection_id que fazem parte do caminho mais curto
+    (Dijkstra) do(s) quadro(s) até QUALQUER componente deste circuito.
+    Reaproveita a mesma lógica de grafo/bloqueio de calcular_comprimento_max_circuito.
+    """
+    todos_componentes = db.query(models.Component).filter(models.Component.project_id == project_id).all()
+    comp_map = {c.id: c for c in todos_componentes}
+
+    quadros = [c for c in todos_componentes if c.tipo in ("quadro", "quadro_parcial")]
+    if not quadros:
+        return set()
+
+    conexoes = db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
+
+    circ = db.query(models.Circuit).filter(models.Circuit.id == circuit_id).first()
+    circ_nome = circ.nome if circ else ""
+    circ_id_str = str(circuit_id)
+
+    # adj[n] = [(vizinho, peso, connection_id)]
+    adj = {c.id: [] for c in todos_componentes}
+    for conn in conexoes:
+        if conn.origem_id in comp_map and conn.destino_id in comp_map:
+            bloqueados = []
+            if conn.circuitos_bloqueados:
+                try:
+                    bloqueados = json.loads(conn.circuitos_bloqueados)
+                except Exception:
+                    bloqueados = []
+            if circ_id_str in bloqueados or (circ_nome and circ_nome in bloqueados):
+                continue
+
+            c1 = comp_map[conn.origem_id]
+            c2 = comp_map[conn.destino_id]
+            x1, y1 = c1.x or 0.0, c1.y or 0.0
+            x2, y2 = c2.x or 0.0, c2.y or 0.0
+            dist = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+            adj[conn.origem_id].append((conn.destino_id, dist, conn.id))
+            adj[conn.destino_id].append((conn.origem_id, dist, conn.id))
+
+    # Dijkstra multi-origem a partir de todos os quadros, guardando os
+    # predecessores para reconstruir o caminho (não só a distância).
+    distancias = {c.id: float('inf') for c in todos_componentes}
+    predecessor_edge = {c.id: None for c in todos_componentes}  # comp_id -> connection_id usado para chegar
+    predecessor_node = {c.id: None for c in todos_componentes}  # comp_id -> nó anterior no caminho
+    queue = []
+    for q in quadros:
+        distancias[q.id] = 0.0
+        heapq.heappush(queue, (0.0, q.id))
+
+    while queue:
+        dist_atual, u = heapq.heappop(queue)
+        if dist_atual > distancias[u]:
+            continue
+        for v, peso, conn_id in adj.get(u, []):
+            nova_dist = dist_atual + peso
+            if nova_dist < distancias[v]:
+                distancias[v] = nova_dist
+                predecessor_node[v] = u
+                predecessor_edge[v] = conn_id
+                heapq.heappush(queue, (nova_dist, v))
+
+    comps_do_circuito = [c for c in todos_componentes if c.circuit_id == circuit_id]
+
+    connection_ids_usados = set()
+    for comp in comps_do_circuito:
+        atual = comp.id
+        visitados_seguranca = 0
+        while predecessor_edge.get(atual) is not None and visitados_seguranca < len(todos_componentes):
+            connection_ids_usados.add(predecessor_edge[atual])
+            atual = predecessor_node[atual]
+            visitados_seguranca += 1
+
+    return connection_ids_usados
+
+
+@router.get("/projects/{project_id}/eletrodutos/fiacao")
+def obter_fiacao_eletrodutos(project_id: int, db: Session = Depends(get_db)):
+    """
+    Para cada conduto (Connection) do projeto, devolve a lista de circuitos
+    cujo caminho mais curto até ao quadro passa por esse troço — pronto para
+    desenhar a notação de chicote de condutores (traço por fio, numerado,
+    com secção em baixo, e um traço extra 'T' de terra).
+    """
+    projeto = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not projeto:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+
+    circuitos = db.query(models.Circuit).filter(models.Circuit.project_id == project_id).all()
+    conexoes = db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
+
+    # connection_id -> lista de circuitos que passam por ali
+    fiacao_por_conexao = {conn.id: [] for conn in conexoes}
+
+    for circuito in circuitos:
+        connection_ids = calcular_caminho_circuito(project_id, circuito.id, db)
+        for conn_id in connection_ids:
+            if conn_id in fiacao_por_conexao:
+                fiacao_por_conexao[conn_id].append({
+                    "circuit_id": circuito.id,
+                    "numero": circuito.numero,
+                    "nome": circuito.nome,
+                    "fase": circuito.fase,
+                    "bitola_mm2": circuito.cabo_bitola_mm2,
+                })
+
+    resultado = []
+    for conn in conexoes:
+        circuitos_no_troco = fiacao_por_conexao.get(conn.id, [])
+        resultado.append({
+            "connection_id": conn.id,
+            "origem_id": conn.origem_id,
+            "destino_id": conn.destino_id,
+            "circuitos": circuitos_no_troco,
+            "tem_terra": len(circuitos_no_troco) > 0,
+        })
+
+    return {"project_id": project_id, "eletrodutos": resultado}
+
+
+def calcular_circuitos_agrupados(
+    project_id: int, circuit_id: int, db: Session,
+    todos_componentes: list = None, conexoes: list = None
+) -> int:
     """Retorna o número máximo de circuitos diferentes que partilham conexões com este circuito."""
-    componentes = db.query(models.Component).filter(models.Component.project_id == project_id).all()
-    comp_to_circuit = {c.id: c.circuit_id for c in componentes if c.circuit_id is not None}
+    if todos_componentes is None:
+        todos_componentes = db.query(models.Component).filter(models.Component.project_id == project_id).all()
+    comp_to_circuit = {c.id: c.circuit_id for c in todos_componentes if c.circuit_id is not None}
     
-    comp_ids_circuito = {c.id for c in componentes if c.circuit_id == circuit_id}
+    comp_ids_circuito = {c.id for c in todos_componentes if c.circuit_id == circuit_id}
     if not comp_ids_circuito:
         return 1
         
-    conexoes = db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
+    if conexoes is None:
+        conexoes = db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
     
     circuitos_por_conexao = []
     for conn in conexoes:
@@ -667,18 +803,31 @@ def dimensionar_todos_circuitos(
 
     circuitos = db.query(models.Circuit).filter(
         models.Circuit.project_id == project_id
-    ).options(selectinload(models.Circuit.components)).all()
+    ).all()
+    todos_componentes = db.query(models.Component).filter(
+        models.Component.project_id == project_id
+    ).all()
+    todas_conexoes = db.query(models.Connection).filter(
+        models.Connection.project_id == project_id
+    ).all()
+
     resultados = []
 
+    # Pré-construir dicionário circuito -> componentes (O(N) em vez de O(C×N))
+    comp_by_circuit = {}
+    for c in todos_componentes:
+        if c.circuit_id is not None:
+            comp_by_circuit.setdefault(c.circuit_id, []).append(c)
+
     for circuito in circuitos:
-        componentes = circuito.components
+        componentes = comp_by_circuit.get(circuito.id, [])
         potencia_total = sum((c.potencia_w or 0.0) for c in componentes)
 
         comprimento_m = calcular_comprimento_max_circuito(
-            projeto.id, circuito.id, db
+            projeto.id, circuito.id, db, todos_componentes=todos_componentes, conexoes=todas_conexoes
         )
         agrupados = calcular_circuitos_agrupados(
-            projeto.id, circuito.id, db
+            projeto.id, circuito.id, db, todos_componentes=todos_componentes, conexoes=todas_conexoes
         )
 
         temp = getattr(circuito, 'temperatura_c', None)
@@ -772,6 +921,21 @@ def atualizar_componente(component_id: int, payload: schemas.ComponentUpdate, db
     db.commit()
     db.refresh(componente)
     return componente
+
+
+@router.post("/components/batch-update", response_model=List[schemas.ComponentOut])
+def atualizar_componentes_lote(payload: schemas.ComponentBatchUpdate, db: Session = Depends(get_db)):
+    if not payload.ids:
+        return []
+    componentes = db.query(models.Component).filter(models.Component.id.in_(payload.ids)).all()
+    update_data = payload.dados.model_dump(exclude_unset=True)
+    for comp in componentes:
+        for campo, valor in update_data.items():
+            setattr(comp, campo, valor)
+    db.commit()
+    for comp in componentes:
+        db.refresh(comp)
+    return componentes
 
 
 @router.delete("/components/{component_id}")

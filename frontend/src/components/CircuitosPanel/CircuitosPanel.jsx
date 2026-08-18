@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../../api/client";
 import { useToast } from "../Toast/Toast";
+import NixieDisplay from "../NixieDisplay/NixieDisplay";
 import "./CircuitosPanel.css";
 
 const LABELS_TIPO = {
@@ -11,6 +12,7 @@ const LABELS_TIPO = {
   lampada_tubular: "Lâmpada Tubular",
   lampada_led: "Fita de LED",
   lampada_pendente: "Lustre / Pendente",
+  lampada_jardim: "LED Jardim / Espeto",
   tomada: "Tomada",
   tomada_baixa: "Tomada Baixa",
   tomada_media: "Tomada Média",
@@ -38,25 +40,13 @@ const LABELS_TIPO = {
   quadro: "Quadro Geral",
 };
 
-const BITOLAS_CABO = ["1.5 mm²", "2.5 mm²", "4.0 mm²", "6.0 mm²", "10.0 mm²", "16.0 mm²", "25.0 mm²", "35.0 mm²"];
-
-function obterRotuloExibicao(c) {
-  if (!c) return "?";
-  if (c.rotulo) {
-    if (typeof c.rotulo === "string" && c.rotulo.startsWith("{")) {
-      try {
-        const parsed = JSON.parse(c.rotulo);
-        if (parsed?.nome) return parsed.nome;
-      } catch {}
-    } else if (c.rotulo !== c.tipo) {
-      return c.rotulo;
-    }
-  }
-  return LABELS_TIPO[c.tipo] || c.tipo || "?";
+function tensaoDe(fase) {
+  if (fase === "bifasico" || fase === "trifasico") return "380V";
+  return "220V";
 }
 
 /**
- * CircuitosPanel — Painel de gestão de circuitos e conexões.
+ * CircuitosPanel — Painel de gestão de circuitos.
  * Aparece no lado direito quando o botão ⚙ está activo.
  */
 export default function CircuitosPanel({
@@ -64,12 +54,10 @@ export default function CircuitosPanel({
   projectId,
   componentes,
   circuitos,
-  conexoes = [],
   onCircuitoCriado,
   onCircuitoAtualizado,
   onCircuitoApagado,
   onComponenteAtualizado,
-  onConexaoAtualizada,
   onRefreshData,
 }) {
   const [novoCircuitoNome, setNovoCircuitoNome] = useState("");
@@ -78,6 +66,7 @@ export default function CircuitosPanel({
   const [calculatingAll, setCalculatingAll] = useState(false);
   const [dividindo, setDividindo] = useState(false);
   const [globalResults, setGlobalResults] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
   const toast = useToast();
 
   // Reset states when switching projects
@@ -98,6 +87,21 @@ export default function CircuitosPanel({
     }
   }
 
+  async function atualizarCircuitoQuadro(circuitId, quadroId) {
+    try {
+      const qId = quadroId ? parseInt(quadroId, 10) : null;
+      const atualizado = await api.atualizarCircuito(circuitId, { quadro_id: qId });
+      onCircuitoAtualizado(atualizado);
+      toast.success("Quadro do circuito atualizado");
+    } catch (err) {
+      toast.error(`Erro ao atualizar quadro do circuito: ${err.message}`);
+    }
+  }
+
+  const quadrosDisponiveis = (componentes || []).filter(
+    (c) => c.tipo === "quadro" || c.tipo === "quadro_parcial"
+  );
+
   async function atualizarCircuitoParam(circuitId, campo, valor) {
     try {
       const atualizado = await api.atualizarCircuito(circuitId, { [campo]: Number(valor) });
@@ -105,16 +109,6 @@ export default function CircuitosPanel({
       await calcularDimensionamento(circuitId);
     } catch (err) {
       toast.error(`Erro ao atualizar ${campo}: ${err.message}`);
-    }
-  }
-
-  async function atualizarTipoCabo(connectionId, tipoCabo) {
-    try {
-      const atualizado = await api.atualizarConexao(connectionId, { tipo_cabo: tipoCabo || null });
-      onConexaoAtualizada?.(atualizado);
-      toast.success("Tipo de cabo atualizado");
-    } catch (err) {
-      toast.error(`Erro ao atualizar cabo: ${err.message}`);
     }
   }
 
@@ -203,38 +197,83 @@ export default function CircuitosPanel({
     <div className={`circuitos-panel ${aberto ? "open" : "closed"}`}>
       {/* ─── Circuitos ─── */}
       <div className="panel-section">
-        <div className="panel-section-header">
-          <h3>Circuitos</h3>
-          <span className="badge">{circuitos.length}</span>
-        </div>
+        <div className="panel-sticky-header">
+          <div className="panel-section-header">
+            <h3>Circuitos</h3>
+            <span className="badge">{circuitos.length}</span>
+          </div>
 
-        <div className="new-circuit">
-          <input
-            placeholder="Nome do circuito..."
-            value={novoCircuitoNome}
-            onChange={(e) => setNovoCircuitoNome(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button onClick={criarCircuito} title="Criar circuito">+</button>
+          <div className="new-circuit">
+            <input
+              placeholder="Nome do circuito..."
+              value={novoCircuitoNome}
+              onChange={(e) => setNovoCircuitoNome(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            <button onClick={criarCircuito} title="Criar circuito">+</button>
+          </div>
         </div>
 
         <div className="cards-list">
-          {circuitos.map((c) => (
-            <div key={c.id} className="circuit-card">
-              <div className="circuit-card-header">
+          {circuitos.map((c) => {
+            const expandida = expandedId === c.id;
+            return (
+            <div key={c.id} className={`circuit-card ${expandida ? "expanded" : ""}`}>
+              <button
+                type="button"
+                className="circuit-card-header circuit-accordion-toggle"
+                onClick={() => setExpandedId(expandida ? null : c.id)}
+                aria-expanded={expandida}
+              >
                 <span className="circuit-indicator" />
                 <span className="circuit-title">{c.nome}</span>
-                <select
-                  className="select-circuit-fase"
-                  value={c.fase || "monofasico"}
-                  onChange={(e) => atualizarCircuitoFase(c.id, e.target.value)}
-                  title="Alterar fase do circuito"
-                >
-                  <option value="monofasico">Monofásico (220V)</option>
-                  <option value="bifasico">Bifásico (380V)</option>
-                  <option value="trifasico">Trifásico (380V)</option>
-                </select>
-              </div>
+                <span className="circuit-tensao">{tensaoDe(c.fase)}</span>
+                <span className="circuit-chevron">{expandida ? "▾" : "▸"}</span>
+              </button>
+
+              {expandida && (
+              <div className="circuit-card-body">
+                <div className="dim-params">
+                  <label className="dim-param">
+                    <span className="dim-param-label">Fase</span>
+                    <select
+                      className="dim-param-input"
+                      value={c.fase || "monofasico"}
+                      onChange={(e) => atualizarCircuitoFase(c.id, e.target.value)}
+                      title="Alterar fase do circuito"
+                    >
+                      <option value="monofasico">Monofásico (220V)</option>
+                      <option value="bifasico">Bifásico (380V)</option>
+                      <option value="trifasico">Trifásico (380V)</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="dim-params">
+                  <label className="dim-param">
+                    <span className="dim-param-label">Quadro</span>
+                    <select
+                      className="dim-param-input"
+                      value={c.quadro_id || ""}
+                      onChange={(e) => atualizarCircuitoQuadro(c.id, e.target.value)}
+                      title="Indicar quadro de alimentação"
+                    >
+                      <option value="">Sem quadro</option>
+                      {quadrosDisponiveis.map((q) => {
+                        let nomeQ = q.tipo;
+                        try {
+                          const parsed = JSON.parse(q.rotulo);
+                          if (parsed?.nome) nomeQ = parsed.nome;
+                        } catch {}
+                        return (
+                          <option key={q.id} value={q.id}>
+                            {nomeQ} ({q.tipo === "quadro" ? "QGBT" : "QP"})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                </div>
 
               {/* Parâmetros de dimensionamento dinâmico */}
               <div className="dim-params">
@@ -295,25 +334,25 @@ export default function CircuitosPanel({
                 <div className="dim-result">
                   <div className="dim-row">
                     <span className="dim-label">Potência</span>
-                    <span className="dim-value">{dimensionamentos[c.id].dimensionamento.potencia_total_w} W</span>
+                    <NixieDisplay value={dimensionamentos[c.id].dimensionamento.potencia_total_w} unit="W" decimals={0} />
                   </div>
                   <div className="dim-row">
                     <span className="dim-label">Corrente Nominal</span>
-                    <span className="dim-value">{dimensionamentos[c.id].dimensionamento.corrente_a} A</span>
+                    <NixieDisplay value={dimensionamentos[c.id].dimensionamento.corrente_a} unit="A" decimals={2} />
                   </div>
                   {dimensionamentos[c.id].dimensionamento.corrente_corrigida_a > dimensionamentos[c.id].dimensionamento.corrente_a && (
                     <div className="dim-row">
                       <span className="dim-label">Corr. Corrigida</span>
-                      <span className="dim-value" title="Corrente considerando agrupamento e temperatura">{dimensionamentos[c.id].dimensionamento.corrente_corrigida_a} A</span>
+                      <NixieDisplay value={dimensionamentos[c.id].dimensionamento.corrente_corrigida_a} unit="A" decimals={2} />
                     </div>
                   )}
                   <div className="dim-row">
                     <span className="dim-label">Comprimento Max</span>
-                    <span className="dim-value">{dimensionamentos[c.id].dimensionamento.comprimento_m} m</span>
+                    <NixieDisplay value={dimensionamentos[c.id].dimensionamento.comprimento_m} unit="m" decimals={1} />
                   </div>
                   <div className="dim-row">
                     <span className="dim-label">Queda de Tensão</span>
-                    <span className="dim-value">{dimensionamentos[c.id].dimensionamento.queda_tensao_pct}%</span>
+                    <NixieDisplay value={dimensionamentos[c.id].dimensionamento.queda_tensao_pct} unit="%" decimals={1} />
                   </div>
                   <div className="dim-row text-xs opacity-70">
                     <span className="dim-label">FCA / FCT</span>
@@ -321,11 +360,11 @@ export default function CircuitosPanel({
                   </div>
                   <div className="dim-row">
                     <span className="dim-label">Disjuntor</span>
-                    <span className="dim-value">{dimensionamentos[c.id].dimensionamento.disjuntor_recomendado_a} A</span>
+                    <NixieDisplay value={dimensionamentos[c.id].dimensionamento.disjuntor_recomendado_a} unit="A" decimals={0} />
                   </div>
                   <div className="dim-row">
                     <span className="dim-label">Cabo Recomendado</span>
-                    <span className="dim-value font-bold">{dimensionamentos[c.id].dimensionamento.cabo_recomendado_mm2} mm²</span>
+                    <NixieDisplay value={dimensionamentos[c.id].dimensionamento.cabo_recomendado_mm2} unit="mm²" decimals={1} />
                   </div>
                   {dimensionamentos[c.id].dimensionamento.avisos?.map((a, i) => (
                     <div key={i} className="aviso">⚠ {a}</div>
@@ -335,8 +374,11 @@ export default function CircuitosPanel({
                   ))}
                 </div>
               )}
+              </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Botões de ações em lote */}
@@ -371,7 +413,7 @@ Componentes já atribuídos manualmente não são alterados.`}
             <div className="dim-global-results">
               <div className="dim-global-summary">
                 <span className="dim-label">Total de circuitos</span>
-                <span className="dim-value">{globalResults.total_circuits}</span>
+                <NixieDisplay value={globalResults.total_circuits} />
               </div>
               {globalResults.results?.map((r) => (
                 <div key={r.circuito_id} className="dim-global-card">
@@ -385,23 +427,23 @@ Componentes já atribuídos manualmente não são alterados.`}
                     <>
                       <div className="dim-row">
                         <span className="dim-label">Potência</span>
-                        <span className="dim-value">{r.potencia_total_w} W</span>
+                        <NixieDisplay value={r.potencia_total_w} unit="W" decimals={0} />
                       </div>
                       <div className="dim-row">
                         <span className="dim-label">Corrente Ib</span>
-                        <span className="dim-value">{r.nominalCurrent_A} A</span>
+                        <NixieDisplay value={r.nominalCurrent_A} unit="A" decimals={2} />
                       </div>
                       <div className="dim-row">
                         <span className="dim-label">Disjuntor In</span>
-                        <span className="dim-value dim-value-highlight">{r.breaker_A} A</span>
+                        <NixieDisplay value={r.breaker_A} unit="A" decimals={0} />
                       </div>
                       <div className="dim-row">
                         <span className="dim-label">Cabo</span>
-                        <span className="dim-value dim-value-highlight">{r.cableSection_mm2} mm²</span>
+                        <NixieDisplay value={r.cableSection_mm2} unit="mm²" decimals={1} />
                       </div>
                       <div className="dim-row">
                         <span className="dim-label">Queda Tensão</span>
-                        <span className="dim-value">{r.voltageDrop_percentage}%</span>
+                        <NixieDisplay value={r.voltageDrop_percentage} unit="%" decimals={1} />
                       </div>
                       {r.warnings?.map((w, i) => (
                         <div key={i} className="aviso">⚠ {w}</div>
@@ -415,49 +457,6 @@ Componentes já atribuídos manualmente não são alterados.`}
         </div>
       </div>
 
-      {/* ─── Conexões ─── */}
-      {conexoes.length > 0 && (
-        <div className="panel-section">
-          <div className="panel-section-header">
-            <h3>Conexões</h3>
-            <span className="badge">{conexoes.length}</span>
-          </div>
-
-          <div className="cards-list">
-            {conexoes.map((con) => {
-              const origem = componentes.find((c) => c.id === con.origem_id);
-              const destino = componentes.find((c) => c.id === con.destino_id);
-              return (
-                <div key={con.id} className="connection-card">
-                  <div className="connection-card-row">
-                    <span className="connection-line-icon">🔗</span>
-                    <span className="connection-label">
-                      {obterRotuloExibicao(origem)}
-                    </span>
-                    <span className="connection-arrow">→</span>
-                    <span className="connection-label">
-                      {obterRotuloExibicao(destino)}
-                    </span>
-                  </div>
-                  <label className="connection-tipo-label">
-                    <span className="field-label">Tipo de Cabo</span>
-                    <select
-                      className="connection-tipo-select"
-                      defaultValue={con.tipo_cabo || ""}
-                      onChange={(e) => atualizarTipoCabo(con.id, e.target.value)}
-                    >
-                      <option value="">Automático</option>
-                      {BITOLAS_CABO.map((b) => (
-                        <option key={b} value={b}>{b}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

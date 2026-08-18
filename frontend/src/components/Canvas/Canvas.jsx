@@ -43,7 +43,7 @@ export default function Canvas({
     fabricCanvasRef, pronto,
     desenharGeometria, desenharComponente, desenharFitaLed,
     desenharConexao, desenharRoom, atualizarConexoes, encontrarComponenteEm,
-    limpar, setGridVisible, toggleFloorPlanLock, exportarPNG,
+    limpar, setGridVisible, carregarFiacao, ocultarFiacao, toggleFloorPlanLock, exportarPNG,
     geometriaRef, floorPlanGroupRef, floorPlanScaleRef,
     floorPlanClipRectRef, floorPlanModeRef,
   } = useFabricCanvas(canvasElRef, containerRef);
@@ -63,6 +63,8 @@ export default function Canvas({
       onCanvasRef({
         canvas: fabricCanvasRef.current,
         exportarPNG,
+        carregarFiacao,
+        ocultarFiacao,
         toggleFloorPlanLock,
         geometriaRef,
         floorPlanGroupRef,
@@ -71,7 +73,7 @@ export default function Canvas({
         floorPlanModeRef,
       });
     }
-  }, [pronto, fabricCanvasRef, exportarPNG, geometriaRef, floorPlanGroupRef,
+  }, [pronto, fabricCanvasRef, exportarPNG, carregarFiacao, ocultarFiacao, geometriaRef, floorPlanGroupRef,
       floorPlanScaleRef, floorPlanClipRectRef, floorPlanModeRef, onCanvasRef]);
 
   // ─── Alça Interativa de Edição de Curva (Condutos) ───
@@ -92,6 +94,15 @@ export default function Canvas({
 
     function atualizarAlcaCurva(target) {
       removerAlcaCurva();
+
+      // Se o clique foi no hit-target largo (glowPath), resolver para o conduto real
+      if (target?.data?.isConnectionGlow) {
+        const realPath = canvas.getObjects().find(
+          (o) => o.data?.isConnection && o.data.connectionId === target.data.connectionId
+        );
+        if (realPath) target = realPath;
+      }
+
       if (!target || !target.data?.isConnection) return;
 
       let c1_x = target.data.c1_x;
@@ -218,6 +229,12 @@ export default function Canvas({
     };
   }, [pronto, fabricCanvasRef, removerAlcaCurva]);
 
+  const componentesRef = useRef(componentes);
+  useEffect(() => { componentesRef.current = componentes; }, [componentes]);
+
+  const desenhadasRoomsRef = useRef(new Set());
+  const handleRoomModifiedRef = useRef(null);
+
   // ─── Duplicação de Componente com Clique Direito (Mouse Button 2) ───
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
@@ -227,7 +244,6 @@ export default function Canvas({
       const e = options.e;
       if (!e) return;
 
-      // Clique direito do rato (button === 2 ou options.button === 3)
       const isRightClick = e.button === 2 || options.button === 3;
       if (isRightClick) {
         if (typeof e.preventDefault === "function") e.preventDefault();
@@ -236,7 +252,7 @@ export default function Canvas({
         const target = options.target || (canvas.findTarget ? canvas.findTarget(e) : null);
         const componentId = target?.data?.componentId || target?.group?.data?.componentId;
         if (componentId) {
-          const orig = componentes.find((c) => c.id === componentId);
+          const orig = componentesRef.current.find((c) => c.id === componentId);
           if (!orig) return;
 
           const pointer = canvas.getScenePoint?.(e) || canvas.getPointer(e);
@@ -268,19 +284,20 @@ export default function Canvas({
     return () => {
       canvas.off("mouse:down", handleRightClickDuplicate);
     };
-  }, [pronto, fabricCanvasRef, componentes, projectId, onComponenteCriado, toast]);
+  }, [pronto, fabricCanvasRef, projectId, onComponenteCriado, toast]);
 
   // Sincronizar visibilidade da grelha
   useEffect(() => {
     if (pronto) setGridVisible(gridVisivel);
   }, [gridVisivel, pronto]);
 
-  // Desenha a geometria + divisões (rooms) + componentes na inicialização/alterações estruturais
+  // Desenha a geometria + componentes na inicialização/alterações estruturais de geometria
   useEffect(() => {
     if (!pronto) return;
     limpar();
     desenhadosRef.current = new Set();
-    
+    desenhadasRoomsRef.current = new Set();
+
     // 1. Desenhar a planta DXF de fundo
     const geoResult = desenharGeometria(geometria);
     if (geoResult?.modo === "agrupado" && geoResult.totalObjetos > 0) {
@@ -294,12 +311,7 @@ export default function Canvas({
       });
     }
 
-    // 2. Desenhar as divisões (rooms)
-    rooms.forEach((r) => {
-      desenharRoom(r, { onModified: handleRoomModified });
-    });
-
-    // 3. Desenhar componentes elétricos
+    // 2. Desenhar componentes elétricos
     componentes.forEach((c) => {
       if (desenhadosRef.current.has(c.id)) return;
       desenhadosRef.current.add(c.id);
@@ -318,15 +330,46 @@ export default function Canvas({
         desenharComponente(c, { onModified: handleModified });
       }
     });
-    
-    // 4. Desenhar conexões elétricas (cabos)
+
+    // 3. Desenhar conexões elétricas (cabos)
     conexoes.forEach((con) => desenharConexao(con, componentes));
 
-    // 5. Render único no fim (as funções de desenho já não chamam renderAll)
+    // 4. Render único no fim
     fabricCanvasRef.current?.requestRenderAll();
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pronto, geometria, rooms]);
+  }, [pronto, geometria]);
+
+  // ─── Sincronização incremental de divisões (rooms) ───
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!pronto || !canvas) return;
+
+    const existingRoomObjects = canvas.getObjects().filter((o) => o.data?.roomId);
+    const currentRoomIds = new Set(rooms.map((r) => r.id));
+
+    // Remover rooms eliminadas
+    existingRoomObjects.forEach((obj) => {
+      if (!currentRoomIds.has(obj.data.roomId)) {
+        canvas.remove(obj);
+        desenhadasRoomsRef.current.delete(obj.data.roomId);
+      }
+    });
+
+    // Adicionar rooms novas
+    let alterou = false;
+    rooms.forEach((r) => {
+      if (!desenhadasRoomsRef.current.has(r.id)) {
+        desenharRoom(r, { onModified: handleRoomModifiedRef.current });
+        desenhadasRoomsRef.current.add(r.id);
+        alterou = true;
+      }
+    });
+
+    if (alterou || existingRoomObjects.length !== currentRoomIds.size) {
+      canvas.requestRenderAll();
+    }
+  }, [pronto, rooms, desenharRoom]);
 
   // ─── Sincronizar travamento da planta (lock/unlock) ───
   useEffect(() => {
@@ -936,6 +979,7 @@ export default function Canvas({
       toast.error(`Erro ao atualizar divisão: ${err.message}`);
     }
   }
+  handleRoomModifiedRef.current = handleRoomModified;
 
   async function handleDrop(e) {
     e.preventDefault();

@@ -45,14 +45,17 @@ class Circuit(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
     nome = Column(String, nullable=False)
+    numero = Column(Integer, nullable=True)      # número de identificação no quadro (ex: 1, 2, 13)
     disjuntor_amperagem = Column(Float, nullable=True)
     cabo_bitola_mm2 = Column(Float, nullable=True)
     fase = Column(String, default="monofasico")  # monofasico | bifasico | trifasico
     temperatura_c = Column(Float, default=30.0)        # Temperatura ambiente (°C)
     queda_tensao_max_pct = Column(Float, default=4.0)  # Queda de tensão máxima (%)
+    quadro_id = Column(Integer, ForeignKey("components.id", ondelete="SET NULL"), nullable=True, index=True)
 
     project = relationship("Project", back_populates="circuits")
-    components = relationship("Component", back_populates="circuit")
+    components = relationship("Component", back_populates="circuit", foreign_keys="Component.circuit_id")
+    quadro = relationship("Component", foreign_keys=[quadro_id])
 
 
 class Component(Base):
@@ -73,7 +76,7 @@ class Component(Base):
     rotulo = Column(String, nullable=True)  # ex: "Tomada Cozinha 1"
 
     project = relationship("Project", back_populates="components")
-    circuit = relationship("Circuit", back_populates="components")
+    circuit = relationship("Circuit", back_populates="components", foreign_keys=[circuit_id])
 
 
 class Connection(Base):

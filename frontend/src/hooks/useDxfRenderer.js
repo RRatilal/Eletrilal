@@ -82,7 +82,7 @@ export function drawDynamicGrid(canvas, gridVisibleRef) {
   // Crosshair na origem
   const originX = Math.round(vpt[4]) + 0.5;
   const originY = Math.round(vpt[5]) + 0.5;
-  ctx.strokeStyle = "rgba(99, 102, 241, 0.2)";
+  ctx.strokeStyle = "rgba(255, 166, 43, 0.22)";
   ctx.lineWidth = 1;
   if (originX >= 0 && originX <= w) {
     ctx.beginPath();
@@ -214,6 +214,125 @@ export function drawDxfGeometry(canvas, geometriaRef, floorPlanGroupRef, floorPl
     ctx.arc(cx * zoom + vpt[4], cy * zoom + vpt[5], Math.max(c.raio * zoom, 0.5), 0, Math.PI * 2);
     ctx.stroke();
   }
+
+  ctx.restore();
+}
+
+/**
+ * Devolve o ponto médio de um conduto (fabric.Path) em coordenadas de mundo (px)
+ * e o ângulo do eixo do conduto. Para curvas de Bézier (Q) usa o ponto médio
+ * geométrico em t=0.5 — a tangente nesse ponto é paralela ao segmento reto entre
+ * os extremos, logo a perpendicular calculada a partir do ângulo é a correta.
+ */
+function obterPontoMedioConduto(pathArr) {
+  if (!pathArr || pathArr.length < 2) return null;
+  const start = pathArr[0];
+  const last = pathArr[pathArr.length - 1];
+  if (!start || !last) return null;
+
+  const x1 = start[1], y1 = start[2];
+  let x2, y2, cx, cy;
+  if (last[0] === "Q") {
+    cx = last[1]; cy = last[2]; x2 = last[3]; y2 = last[4];
+  } else {
+    x2 = last[1]; y2 = last[2];
+  }
+
+  let x, y;
+  if (last[0] === "Q") {
+    x = 0.25 * x1 + 0.5 * cx + 0.25 * x2;
+    y = 0.25 * y1 + 0.5 * cy + 0.25 * y2;
+  } else {
+    x = (x1 + x2) / 2;
+    y = (y1 + y2) / 2;
+  }
+  return { x, y, angle: Math.atan2(y2 - y1, x2 - x1) };
+}
+
+/**
+ * Desenha, ao longo de cada conduto (Connection), um traço perpendicular por
+ * circuito que passa ali — numerado, com a secção (mm²) por baixo, e um traço
+ * extra "T" para o terra. Notação clássica de chicote de condutores.
+ *
+ * fiacaoRef: { [connection_id]: { circuitos: [{numero, bitola_mm2}], tem_terra } }
+ * Os traços/labels têm tamanho constante no ecrã (independente do zoom).
+ */
+export function drawFiacaoTicks(canvas, fiacaoRef, fiacaoVisivelRef) {
+  if (!fiacaoVisivelRef.current || !fiacaoRef.current) return;
+  const ctx = canvas.getContext();
+  if (!ctx) return;
+
+  const zoom = canvas.getZoom();
+  const vpt = canvas.viewportTransform;
+  const isDark = document.documentElement.getAttribute("data-theme") !== "light";
+  const corTinta = isDark ? "#e5e7eb" : "#111827";
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.font = "10px 'Spline Sans Mono', monospace";
+  ctx.textAlign = "center";
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = corTinta;
+  ctx.fillStyle = corTinta;
+
+  canvas.getObjects().forEach((obj) => {
+    if (!obj.data?.isConnection) return;
+    const info = fiacaoRef.current[obj.data.connectionId];
+    if (!info || info.circuitos.length === 0) return;
+
+    const mid = obterPontoMedioConduto(obj.path);
+    if (!mid) return;
+
+    // Centro do chicote em coordenadas de ecrã
+    const scx = mid.x * zoom + vpt[4];
+    const scy = mid.y * zoom + vpt[5];
+    const perp = mid.angle + Math.PI / 2;
+
+    // Um traço por condutor: fase(s) e neutro de cada circuito (numerados com
+    // o circuito por cima), mais um traço único "T" de terra no início.
+    const itens = [];
+    info.circuitos.forEach((c) => {
+      const numFases = c.fase === "trifasico" ? 3 : c.fase === "bifasico" ? 2 : 1;
+      const prefixo = c.numero != null ? String(c.numero) : "";
+      const bitola = c.bitola_mm2 != null ? String(c.bitola_mm2) : null;
+      for (let i = 0; i < numFases; i++) itens.push({ label: `${prefixo}F`, bitola });
+      itens.push({ label: `${prefixo}N`, bitola });
+    });
+    itens.push({ label: "T", bitola: null });
+
+    // Espaçamento adaptativo para números com 2 dígitos não se sobreporem
+    let maxLabelWidth = 0;
+    itens.forEach((item) => {
+      maxLabelWidth = Math.max(maxLabelWidth, ctx.measureText(item.label).width);
+    });
+    const espacamento = Math.max(14, maxLabelWidth + 4); // px entre traços, em espaço de ecrã
+    const totalLargura = (itens.length - 1) * espacamento;
+    const tickLen = 7;
+
+    itens.forEach((item, i) => {
+      const offset = -totalLargura / 2 + i * espacamento;
+      const cx = scx + Math.cos(mid.angle) * offset;
+      const cy = scy + Math.sin(mid.angle) * offset;
+
+      // Traço perpendicular ao conduto
+      const x1 = cx + Math.cos(perp) * tickLen;
+      const y1 = cy + Math.sin(perp) * tickLen;
+      const x2 = cx - Math.cos(perp) * tickLen;
+      const y2 = cy - Math.sin(perp) * tickLen;
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      // Número do circuito por cima do traço
+      ctx.fillText(item.label, cx, y1 - 3);
+      // Secção (mm²) por baixo do traço
+      if (item.bitola) {
+        ctx.fillText(item.bitola, cx, y2 + 10);
+      }
+    });
+  });
 
   ctx.restore();
 }
