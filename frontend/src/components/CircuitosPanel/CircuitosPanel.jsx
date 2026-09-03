@@ -40,9 +40,36 @@ const LABELS_TIPO = {
   quadro: "Quadro Geral",
 };
 
-function tensaoDe(fase) {
-  if (fase === "bifasico" || fase === "trifasico") return "380V";
-  return "220V";
+function tensaoDe(circuito) {
+  const quantidade = fasesDoCircuito(circuito).length;
+  return quantidade > 1 ? "380V" : "220V";
+}
+
+function dadosDoQuadro(quadro) {
+  if (!quadro?.rotulo) return {};
+  try {
+    const dados = JSON.parse(quadro.rotulo);
+    return dados && typeof dados === "object" ? dados : {};
+  } catch {
+    return {};
+  }
+}
+
+function tipoFaseDoQuadro(quadro) {
+  return dadosDoQuadro(quadro).tipo_fase || "trifasico";
+}
+
+function fasesPermitidas(tipoFase) {
+  if (tipoFase === "monofasico") return ["L1"];
+  if (tipoFase === "bifasico") return ["L1", "L2", "L1-L2"];
+  return ["L1", "L2", "L3", "L1-L2", "L1-L3", "L2-L3", "L1-L2-L3"];
+}
+
+function fasesDoCircuito(circuito) {
+  if (Array.isArray(circuito.fases) && circuito.fases.length > 0) return circuito.fases;
+  if (circuito.fase === "trifasico") return ["L1", "L2", "L3"];
+  if (circuito.fase === "bifasico") return ["L1", "L2"];
+  return ["L1"];
 }
 
 /**
@@ -67,6 +94,7 @@ export default function CircuitosPanel({
   const [dividindo, setDividindo] = useState(false);
   const [globalResults, setGlobalResults] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const [expandedQuadros, setExpandedQuadros] = useState({});
   const toast = useToast();
 
   // Reset states when switching projects
@@ -76,11 +104,22 @@ export default function CircuitosPanel({
     setDimensionamentos({});
   }, [projectId]);
 
-  async function atualizarCircuitoFase(circuitId, fase) {
+  async function atualizarCircuitoFases(circuitId, valor) {
     try {
-      const atualizado = await api.atualizarCircuito(circuitId, { fase });
+      const circuitoAtual = (circuitos || []).find((c) => c.id === circuitId);
+      const quadro = quadrosDisponiveis.find((q) => Number(q.id) === Number(circuitoAtual?.quadro_id));
+      const permitidas = fasesPermitidas(tipoFaseDoQuadro(quadro));
+      const fasesSelecionadas = valor.split("-").filter(Boolean);
+      if (!permitidas.includes(valor)) {
+        throw new Error("As fases selecionadas não pertencem à alimentação do quadro.");
+      }
+      const tipo = fasesSelecionadas.length === 1 ? "monofasico" : fasesSelecionadas.length === 2 ? "bifasico" : "trifasico";
+      const atualizado = await api.atualizarCircuito(circuitId, {
+        fase: tipo,
+        fases: fasesSelecionadas,
+      });
       onCircuitoAtualizado(atualizado);
-      toast.success(`Fase do circuito alterada para ${fase}`);
+      toast.success("Fases do circuito atualizadas");
       await calcularDimensionamento(circuitId);
     } catch (err) {
       toast.error(`Erro ao atualizar fase: ${err.message}`);
@@ -90,7 +129,12 @@ export default function CircuitosPanel({
   async function atualizarCircuitoQuadro(circuitId, quadroId) {
     try {
       const qId = quadroId ? parseInt(quadroId, 10) : null;
-      const atualizado = await api.atualizarCircuito(circuitId, { quadro_id: qId });
+      if (!qId) throw new Error("Todo circuito deve estar associado a um quadro.");
+      const quadro = quadrosDisponiveis.find((q) => Number(q.id) === qId);
+      const permitidas = fasesPermitidas(tipoFaseDoQuadro(quadro));
+      const fasesAtualizadas = permitidas;
+      const tipo = fasesAtualizadas.length === 1 ? "monofasico" : fasesAtualizadas.length === 2 ? "bifasico" : "trifasico";
+      const atualizado = await api.atualizarCircuito(circuitId, { quadro_id: qId, fase: tipo, fases: fasesAtualizadas });
       onCircuitoAtualizado(atualizado);
       toast.success("Quadro do circuito atualizado");
     } catch (err) {
@@ -102,9 +146,28 @@ export default function CircuitosPanel({
     (c) => c.tipo === "quadro" || c.tipo === "quadro_parcial"
   );
 
+  function nomeDoQuadro(quadro) {
+    if (!quadro) return "Sem quadro";
+    try {
+      const parsed = JSON.parse(quadro.rotulo || "{}");
+      if (parsed?.nome || parsed?.rotulo) return parsed.nome || parsed.rotulo;
+    } catch {}
+    return quadro.rotulo || (quadro.tipo === "quadro" ? "QGBT" : "QP");
+  }
+
+  const gruposCircuitos = quadrosDisponiveis.map((quadro) => ({
+    quadro,
+    circuitos: circuitos.filter((c) => Number(c.quadro_id) === Number(quadro.id)),
+  }));
+  const circuitosSemQuadro = circuitos.filter((c) => !c.quadro_id);
+
+  function alternarQuadro(quadroId) {
+    setExpandedQuadros((prev) => ({ ...prev, [quadroId]: !prev[quadroId] }));
+  }
+
   async function atualizarCircuitoParam(circuitId, campo, valor) {
     try {
-      const atualizado = await api.atualizarCircuito(circuitId, { [campo]: Number(valor) });
+      const atualizado = await api.atualizarCircuito(circuitId, { [campo]: campo === "fases" ? valor : Number(valor) });
       onCircuitoAtualizado(atualizado);
       await calcularDimensionamento(circuitId);
     } catch (err) {
@@ -112,10 +175,19 @@ export default function CircuitosPanel({
     }
   }
 
-  async function criarCircuito() {
-    if (!novoCircuitoNome.trim()) return;
+  async function criarCircuito(quadro = null) {
+    const nome = novoCircuitoNome.trim();
+    if (!nome) return;
     try {
-      const circuito = await api.criarCircuito(projectId, { nome: novoCircuitoNome, fase: "monofasico" });
+      const tipoQuadro = tipoFaseDoQuadro(quadro);
+      const fases = fasesPermitidas(tipoQuadro)[0].split("-").filter(Boolean);
+      const tipo = fases.length === 1 ? "monofasico" : fases.length === 2 ? "bifasico" : "trifasico";
+      const circuito = await api.criarCircuito(projectId, {
+        nome,
+        quadro_id: quadro?.id ?? null,
+        fase: tipo,
+        fases,
+      });
       onCircuitoCriado(circuito);
       setNovoCircuitoNome("");
     } catch (err) {
@@ -123,8 +195,8 @@ export default function CircuitosPanel({
     }
   }
 
-  function handleKeyDown(e) {
-    if (e.key === "Enter") criarCircuito();
+  function handleKeyDown(e, quadro = null) {
+    if (e.key === "Enter") criarCircuito(quadro);
   }
 
   async function calcularDimensionamento(circuitoId) {
@@ -203,19 +275,38 @@ export default function CircuitosPanel({
             <span className="badge">{circuitos.length}</span>
           </div>
 
-          <div className="new-circuit">
-            <input
-              placeholder="Nome do circuito..."
-              value={novoCircuitoNome}
-              onChange={(e) => setNovoCircuitoNome(e.target.value)}
-              onKeyDown={handleKeyDown}
-            />
-            <button onClick={criarCircuito} title="Criar circuito">+</button>
-          </div>
+
         </div>
 
         <div className="cards-list">
-          {circuitos.map((c) => {
+          {gruposCircuitos.map(({ quadro, circuitos: circuitosDoQuadro }) => {
+            const grupoAberto = expandedQuadros[quadro.id] !== false;
+            return (
+              <section key={quadro.id} className="circuit-group">
+                <button
+                  type="button"
+                  className="circuit-group-header"
+                  onClick={() => alternarQuadro(quadro.id)}
+                  aria-expanded={grupoAberto}
+                >
+                  <span className="circuit-group-marker" />
+                  <span className="circuit-group-title">{nomeDoQuadro(quadro)}</span>
+                  <span className="circuit-group-type">{quadro.tipo === "quadro" ? "QGBT" : "QP"}</span>
+                  <span className="circuit-group-count">{circuitosDoQuadro.length}</span>
+                  <span className="circuit-chevron">{grupoAberto ? "▾" : "▸"}</span>
+                </button>
+                {grupoAberto && (
+                  <div className="new-circuit circuit-group-new">
+                    <input
+                      placeholder={`Novo circuito em ${nomeDoQuadro(quadro)}...`}
+                      value={novoCircuitoNome}
+                      onChange={(e) => setNovoCircuitoNome(e.target.value)}
+                      onKeyDown={(e) => handleKeyDown(e, quadro)}
+                    />
+                    <button onClick={() => criarCircuito(quadro)} title={`Criar circuito em ${nomeDoQuadro(quadro)}`}>+</button>
+                  </div>
+                )}
+                {grupoAberto && circuitosDoQuadro.map((c) => {
             const expandida = expandedId === c.id;
             return (
             <div key={c.id} className={`circuit-card ${expandida ? "expanded" : ""}`}>
@@ -227,7 +318,7 @@ export default function CircuitosPanel({
               >
                 <span className="circuit-indicator" />
                 <span className="circuit-title">{c.nome}</span>
-                <span className="circuit-tensao">{tensaoDe(c.fase)}</span>
+                <span className="circuit-tensao">{tensaoDe(c)}</span>
                 <span className="circuit-chevron">{expandida ? "▾" : "▸"}</span>
               </button>
 
@@ -235,21 +326,23 @@ export default function CircuitosPanel({
               <div className="circuit-card-body">
                 <div className="dim-params">
                   <label className="dim-param">
-                    <span className="dim-param-label">Fase</span>
+                    <span className="dim-param-label">Fases da rede</span>
                     <select
                       className="dim-param-input"
-                      value={c.fase || "monofasico"}
-                      onChange={(e) => atualizarCircuitoFase(c.id, e.target.value)}
-                      title="Alterar fase do circuito"
+                      value={fasesDoCircuito(c).join("-")}
+                      onChange={(e) => atualizarCircuitoFases(c.id, e.target.value)}
+                      title="Selecionar as fases de rede do circuito"
                     >
-                      <option value="monofasico">Monofásico (220V)</option>
-                      <option value="bifasico">Bifásico (380V)</option>
-                      <option value="trifasico">Trifásico (380V)</option>
+                      {(() => {
+                        const quadro = quadrosDisponiveis.find((q) => Number(q.id) === Number(c.quadro_id));
+                        const permitidas = fasesPermitidas(tipoFaseDoQuadro(quadro));
+                        const valorAtual = fasesDoCircuito(c).join("-");
+                        return [valorAtual, ...permitidas.filter((fase) => fase !== valorAtual)]
+                          .filter((fase, index, lista) => lista.indexOf(fase) === index)
+                          .map((fase) => <option key={fase} value={fase}>{fase}</option>);
+                      })()}
                     </select>
                   </label>
-                </div>
-
-                <div className="dim-params">
                   <label className="dim-param">
                     <span className="dim-param-label">Quadro</span>
                     <select
@@ -258,7 +351,6 @@ export default function CircuitosPanel({
                       onChange={(e) => atualizarCircuitoQuadro(c.id, e.target.value)}
                       title="Indicar quadro de alimentação"
                     >
-                      <option value="">Sem quadro</option>
                       {quadrosDisponiveis.map((q) => {
                         let nomeQ = q.tipo;
                         try {
@@ -379,6 +471,53 @@ export default function CircuitosPanel({
             </div>
             );
           })}
+                </section>
+              );
+          })}
+
+          {circuitosSemQuadro.length > 0 && (
+            <section className="circuit-group circuit-group-unassigned" aria-label="Circuitos sem quadro">
+              <div className="circuit-group-header circuit-group-header-static">
+                <span className="circuit-group-marker" />
+                <span className="circuit-group-title">Sem quadro atribuído</span>
+                <span className="circuit-group-count">{circuitosSemQuadro.length}</span>
+              </div>
+              <div className="circuit-unassigned-warning" role="alert">
+                Estes circuitos não têm quadro e podem ser apagados ou associados a um quadro.
+              </div>
+              {circuitosSemQuadro.map((c) => {
+                const expandida = expandedId === c.id;
+                return (
+                  <div key={c.id} className={`circuit-card ${expandida ? "expanded" : ""}`}>
+                    <button
+                      type="button"
+                      className="circuit-card-header circuit-accordion-toggle"
+                      onClick={() => setExpandedId(expandida ? null : c.id)}
+                      aria-expanded={expandida}
+                    >
+                      <span className="circuit-indicator" />
+                      <span className="circuit-title">{c.nome}</span>
+                      <span className="circuit-chevron">{expandida ? "▾" : "▸"}</span>
+                    </button>
+                    {expandida && (
+                      <div className="circuit-card-body">
+                        <div className="circuit-card-actions">
+                          <button
+                            type="button"
+                            className="btn-delete-circuit"
+                            onClick={() => apagarCircuito(c.id)}
+                            title="Apagar circuito não associado"
+                          >
+                            ✕ Apagar circuito
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </section>
+          )}
         </div>
 
         {/* Botões de ações em lote */}
@@ -411,6 +550,13 @@ Componentes já atribuídos manualmente não são alterados.`}
 
           {globalResults && (
             <div className="dim-global-results">
+              {globalResults.balanceamento?.map((b) => (
+                <div key={String(b.quadro_id)} className={`dim-global-card balance-${b.nivel}`}>
+                  <div className="dim-global-header"><strong>{b.quadro_nome}</strong><span>Desequilíbrio {b.desequilibrio_pct}%</span></div>
+                  <div className="dim-row"><span className="dim-label">L1 / L2 / L3</span><span className="dim-value">{b.correntes_a.L1} A / {b.correntes_a.L2} A / {b.correntes_a.L3} A</span></div>
+                  {b.nivel !== "ok" && <div className="aviso">⚠ Redistribua circuitos para reduzir o desequilíbrio.</div>}
+                </div>
+              ))}
               <div className="dim-global-summary">
                 <span className="dim-label">Total de circuitos</span>
                 <NixieDisplay value={globalResults.total_circuits} />

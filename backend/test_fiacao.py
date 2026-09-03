@@ -59,6 +59,12 @@ assert eletro[con_a_d.id]["circuitos"][0]["numero"] == 9, "numero errado no circ
 assert eletro[con_q_a.id]["tem_terra"] is True
 assert eletro[con_b_c.id]["tem_terra"] is True
 
+# mostrar_rotulo: primeiro troço, e onde a composição muda face ao troço a montante
+assert eletro[con_q_a.id]["mostrar_rotulo"] is True, "Q->A (primeiro troço) devia ter rótulo"
+assert eletro[con_a_b.id]["mostrar_rotulo"] is True, "A->B (composição muda de 2 para 1 circuito) devia ter rótulo"
+assert eletro[con_b_c.id]["mostrar_rotulo"] is False, "B->C (mesma composição de A->B) devia estar em continuação"
+assert eletro[con_a_d.id]["mostrar_rotulo"] is True, "A->D (composição diverge) devia ter rótulo"
+
 # Circuito novo, nunca dimensionado: bitola None sem erro
 circ3 = models.Circuit(project_id=proj.id, nome="Sem Bitola", numero=2)
 db.add(circ3)

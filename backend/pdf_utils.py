@@ -1,4 +1,6 @@
 """Utilitários comuns dos geradores PDF."""
+import json
+
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
 
@@ -7,6 +9,30 @@ def valor(obj, chave, padrao=None):
     if isinstance(obj, dict):
         return obj.get(chave, padrao)
     return getattr(obj, chave, padrao)
+
+
+def nome_legivel(rotulo, padrao=""):
+    """Extrai um nome legível de um rótulo que pode ser texto simples ou JSON.
+
+    Os quadros guardam configuração em JSON no campo ``rotulo``; esta função
+    devolve apenas o nome apresentável (``nome`` ou ``rotulo`` interno), nunca
+    a representação JSON completa.
+    """
+    if rotulo is None:
+        return padrao
+    texto = str(rotulo).strip()
+    if not texto:
+        return padrao
+    if texto.startswith("{") or texto.startswith("["):
+        try:
+            dados = json.loads(texto)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return padrao
+        if isinstance(dados, dict):
+            return str(dados.get("nome") or dados.get("rotulo") or padrao).strip() or padrao
+        if isinstance(dados, list):
+            return padrao
+    return texto
 
 
 def cortar_texto(texto, largura, fonte="Helvetica", tamanho=6, sufixo="…"):

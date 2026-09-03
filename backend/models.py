@@ -5,6 +5,7 @@ Modelos SQLAlchemy - definem as tabelas da base de dados.
 from sqlalchemy import (
     Column, Integer, String, Float, ForeignKey, DateTime, Text
 )
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -49,6 +50,7 @@ class Circuit(Base):
     disjuntor_amperagem = Column(Float, nullable=True)
     cabo_bitola_mm2 = Column(Float, nullable=True)
     fase = Column(String, default="monofasico")  # monofasico | bifasico | trifasico
+    fases = Column(JSON, default=list)  # fases físicas: L1/L2/L3
     temperatura_c = Column(Float, default=30.0)        # Temperatura ambiente (°C)
     queda_tensao_max_pct = Column(Float, default=4.0)  # Queda de tensão máxima (%)
     quadro_id = Column(Integer, ForeignKey("components.id", ondelete="SET NULL"), nullable=True, index=True)

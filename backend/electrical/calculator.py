@@ -149,6 +149,8 @@ def calculateCircuit(
     warnings: List[str] = []
 
     # ─── Step A: Design current (Ib) ───────────────────────────────────────
+    # The caller passes the effective system voltage. For a three-phase
+    # circuit the caller must pass sqrt(3) * 380 V.
     if power_W <= 0 or voltage_V <= 0:
         return CircuitResult(
             nominalCurrent_A=0.0,
@@ -158,7 +160,10 @@ def calculateCircuit(
             warnings=["Invalid power or voltage. Check parameters."],
         )
 
-    Ib = power_W / voltage_V
+    if cos_phi <= 0:
+        raise ValueError("cos_phi must be greater than zero.")
+
+    Ib = power_W / (voltage_V * cos_phi)
 
     # ─── Step B: Minimum normative section ─────────────────────────────────
     min_section = MIN_SECTION.get(circuitType, 1.5)

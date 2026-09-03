@@ -57,10 +57,12 @@ export function getPerpendicularSnapAngle(lineAngle, projX, projY, dragX, dragY)
     return diff;
   };
 
+  // O componente fica orientado pela direção da parede; o lado do arrasto
+  // escolhe qual das duas orientações opostas deve ser usada.
   const diff1 = Math.abs(angleDiff(side1, dragAngle));
   const diff2 = Math.abs(angleDiff(side2, dragAngle));
 
-  const chosen = diff1 <= diff2 ? side1 : side2;
+  const chosen = diff1 < diff2 || Math.abs(diff1 - diff2) < 0.0001 && dragY >= projY ? side1 : side2;
   return ((chosen % 360) + 360) % 360;
 }
 

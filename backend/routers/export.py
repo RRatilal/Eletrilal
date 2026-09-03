@@ -13,6 +13,7 @@ import schemas
 from database import get_db
 from dxf_parser import extrair_geometria, exportar_dxf, DXFParseError
 from pdf_exporter import gerar_pdf_projeto
+from pdf_utils import nome_legivel
 from routers.projects import _compute_dimensioning_readonly
 
 router = APIRouter(tags=["export"])
@@ -95,13 +96,28 @@ def exportar_projeto_pdf(
 
     # O mesmo cálculo usado pela API de dimensionamento mantém a tabela QGBT
     # coerente com o editor, incluindo comprimento e queda de tensão.
+    quadros = {
+        c.id: c for c in componentes
+        if c.tipo in ("quadro", "quadro_parcial")
+    }
+    for circuito in circuitos:
+        quadro = quadros.get(circuito.quadro_id)
+        if quadro:
+            circuito.quadro_nome = nome_legivel(getattr(quadro, "rotulo", None)) or (
+                "QGBT" if quadro.tipo == "quadro" else "QP"
+            )
+        else:
+            circuito.quadro_nome = "—"
+
     resultados = {}
     for circuito in circuitos:
         try:
             calculado = _compute_dimensioning_readonly(circuito, db)
             resultados[circuito.id] = calculado.get("dimensionamento", {})
-        except Exception as erro:
-            resultados[circuito.id] = {"avisos": [f"Não foi possível dimensionar: {erro}"]}
+        except Exception:
+            resultados[circuito.id] = {
+                "avisos": ["Não foi possível dimensionar este circuito."]
+            }
 
     dados_config = config.model_dump()
     if not dados_config.get("data"):
@@ -120,11 +136,16 @@ def exportar_projeto_pdf(
             rooms=rooms,
             resultados=resultados,
             config=dados_config,
+            quadros=[c for c in componentes if c.tipo in ("quadro", "quadro_parcial")],
         )
-    except Exception as erro:
+    except ValueError as erro:
         db.rollback()
         _remover_ficheiro(caminho_saida)
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF: {erro}")
+        raise HTTPException(status_code=422, detail=str(erro))
+    except Exception:
+        db.rollback()
+        _remover_ficheiro(caminho_saida)
+        raise HTTPException(status_code=500, detail="Erro interno ao gerar o PDF.")
 
     return FileResponse(
         caminho_saida,

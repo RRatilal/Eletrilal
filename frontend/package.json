@@ -17,9 +17,11 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.2",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "browserslist": "^4.28.8",
+    "caniuse-lite": "^1.0.30001810",
     "jsdom": "^25.0.1",
     "vite": "^5.4.8",
     "vitest": "^2.1.8"

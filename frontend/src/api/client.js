@@ -11,7 +11,10 @@ async function request(path, options = {}) {
   });
   if (!res.ok) {
     const detalhe = await res.json().catch(() => ({}));
-    throw new Error(detalhe.detail || `Erro ${res.status} em ${path}`);
+    const erro = new Error(detalhe.detail || `Erro ${res.status} em ${path}`);
+    erro.status = res.status;
+    erro.path = path;
+    throw erro;
   }
   // Respostas de ficheiro (export) não são JSON
   const contentType = res.headers.get("content-type") || "";

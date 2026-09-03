@@ -7,6 +7,110 @@ import heapq
 import threading
 import logging
 from typing import List, Union
+
+SQRT_3 = math.sqrt(3.0)
+FASES_REDE = ("L1", "L2", "L3")
+COS_PHI_PADRAO = 0.95
+
+
+def fases_por_tipo(circuito):
+    """Resolve fases físicas; aceita também combinações legadas como ``L1-L2``."""
+    fases = getattr(circuito, "fases", None)
+    tipo = (circuito.fase or "monofasico").lower()
+    if isinstance(fases, str):
+        try:
+            fases = json.loads(fases)
+        except (TypeError, ValueError):
+            fases = None
+    validas = []
+    for fase in (fases or []):
+        if fase in FASES_REDE:
+            validas.append(fase)
+        elif isinstance(fase, str) and "-" in fase:
+            validas.extend(parte for parte in fase.split("-") if parte in FASES_REDE)
+    if validas:
+        return list(dict.fromkeys(validas))
+    if tipo == "trifasico":
+        return ["L1", "L2", "L3"]
+    if tipo == "bifasico":
+        return ["L1", "L2"]
+    return ["L1"]
+
+
+def tensao_efetiva_por_tipo(tipo):
+    tipo = (tipo or "monofasico").lower()
+    if tipo == "trifasico":
+        return SQRT_3 * 380.0
+    return 380.0 if tipo == "bifasico" else 220.0
+
+
+def tipo_por_fases(circuito):
+    """Deriva o sistema de cálculo da seleção física de fases."""
+    quantidade = len(fases_por_tipo(circuito))
+    return "trifasico" if quantidade == 3 else "bifasico" if quantidade == 2 else "monofasico"
+
+
+def distribuir_potencia_por_fase(potencia_w, circuito):
+    fases = fases_por_tipo(circuito)
+    quota = potencia_w / len(fases) if fases else 0.0
+    return {fase: quota for fase in fases}
+
+
+def tipo_fase_do_quadro(quadro):
+    """Lê o tipo de alimentação guardado no rótulo JSON do quadro."""
+    if not quadro or not quadro.rotulo:
+        return "trifasico"
+    try:
+        dados = json.loads(quadro.rotulo)
+        tipo = dados.get("tipo_fase") if isinstance(dados, dict) else None
+        return tipo if tipo in ("monofasico", "bifasico", "trifasico") else "trifasico"
+    except (TypeError, ValueError):
+        return "trifasico"
+
+
+def validar_fase_do_circuito(circuito, quadro):
+    tipo_quadro = tipo_fase_do_quadro(quadro)
+    fases = fases_por_tipo(circuito)
+    limites = {"monofasico": 1, "bifasico": 2, "trifasico": 3}
+    if len(fases) > limites[tipo_quadro]:
+        raise HTTPException(status_code=422, detail=f"O quadro {tipo_quadro} não suporta {len(fases)} fases neste circuito.")
+    tipo_circuito = tipo_por_fases(circuito)
+    permitido = {
+        "monofasico": {"monofasico"},
+        "bifasico": {"monofasico", "bifasico"},
+        "trifasico": {"monofasico", "bifasico", "trifasico"},
+    }
+    if tipo_circuito not in permitido[tipo_quadro]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"O quadro {tipo_quadro} não permite circuitos {tipo_circuito}.",
+        )
+
+
+def balancear_por_fase(circuitos, resultados, quadros=None):
+    """Agrega potência e corrente por fase, agrupada por quadro."""
+    quadros = list(quadros or [])
+    grupos = {getattr(q, "id", None): [] for q in quadros}
+    grupos.setdefault(None, [])
+    for circuito in circuitos or []:
+        grupos.setdefault(getattr(circuito, "quadro_id", None), []).append(circuito)
+    saida = []
+    for quadro_id, grupo in grupos.items():
+        potencia = {fase: 0.0 for fase in FASES_REDE}
+        for circuito in grupo:
+            resultado = resultados.get(circuito.id, {}) or {}
+            p = float(resultado.get("potencia_total_w", 0) or 0)
+            for fase, valor in distribuir_potencia_por_fase(p, circuito).items():
+                potencia[fase] += valor
+        correntes = {fase: potencia[fase] / (220.0 * COS_PHI_PADRAO) for fase in FASES_REDE}
+        media = sum(correntes.values()) / 3.0
+        maxima = max(correntes.values()) if correntes else 0.0
+        desequilibrio = ((maxima - media) / media * 100.0) if media > 0 else 0.0
+        nivel = "danger" if desequilibrio > 30 else "warning" if desequilibrio > 15 else "ok"
+        quadro = next((q for q in quadros if getattr(q, "id", None) == quadro_id), None)
+        nome = getattr(quadro, "rotulo", None) if quadro else "Sem quadro atribuído"
+        saida.append({"quadro_id": quadro_id, "quadro_nome": nome or "Quadro", "potencias_w": {k: round(v, 2) for k, v in potencia.items()}, "correntes_a": {k: round(v, 2) for k, v in correntes.items()}, "corrente_media_a": round(media, 2), "corrente_maxima_a": round(maxima, 2), "desequilibrio_pct": round(desequilibrio, 2), "nivel": nivel})
+    return saida
 from pydantic import BaseModel
 import os
 import time
@@ -130,8 +234,8 @@ def _compute_dimensioning(circuito, db, persistir=True):
     temp = getattr(circuito, 'temperatura_c', None)
     temperatura = temp if temp is not None else 30.0
 
-    fase = (circuito.fase or "monofasico").lower()
-    voltage_V = 380 if fase in ("bifasico", "trifasico") else 220
+    fase = tipo_por_fases(circuito)
+    voltage_V = tensao_efetiva_por_tipo(fase)
 
     circuitType = _detect_circuit_type(componentes)
 
@@ -166,6 +270,7 @@ def _compute_dimensioning(circuito, db, persistir=True):
         "cabo_recomendado_mm2": resultado.cableSection_mm2,
         "queda_tensao_pct": resultado.voltageDrop_percentage,
         "fase": fase,
+        "fases": fases_por_tipo(circuito),
         "fca": fca_val,
         "fct": fct_val,
         "comprimento_m": round(comprimento_m, 2),
@@ -312,6 +417,17 @@ def apagar_room(room_id: int, db: Session = Depends(get_db)):
 # ---------- Circuits ----------
 @router.post("/projects/{project_id}/circuits", response_model=schemas.CircuitOut)
 def criar_circuito(project_id: int, payload: schemas.CircuitCreate, db: Session = Depends(get_db)):
+    if not payload.quadro_id:
+        raise HTTPException(status_code=422, detail="Todo circuito deve estar associado a um quadro.")
+    if payload.quadro_id:
+        quadro = db.query(models.Component).filter(
+            models.Component.id == payload.quadro_id,
+            models.Component.project_id == project_id,
+            models.Component.tipo.in_(("quadro", "quadro_parcial")),
+        ).first()
+        if not quadro:
+            raise HTTPException(status_code=422, detail="Quadro inválido para este projeto.")
+        validar_fase_do_circuito(payload, quadro)
     circuito = models.Circuit(project_id=project_id, **payload.model_dump())
     db.add(circuito)
     db.commit()
@@ -329,7 +445,21 @@ def atualizar_circuito(circuit_id: int, payload: schemas.CircuitUpdate, db: Sess
     circuito = db.query(models.Circuit).filter(models.Circuit.id == circuit_id).first()
     if not circuito:
         raise HTTPException(status_code=404, detail="Circuito não encontrado.")
-    for campo, valor in payload.model_dump(exclude_unset=True).items():
+    dados = payload.model_dump(exclude_unset=True)
+    quadro_id = dados.get("quadro_id", circuito.quadro_id)
+    fase = dados.get("fase", circuito.fase)
+    if not quadro_id:
+        raise HTTPException(status_code=422, detail="Todo circuito deve estar associado a um quadro.")
+    if quadro_id:
+        quadro = db.query(models.Component).filter(
+            models.Component.id == quadro_id,
+            models.Component.project_id == circuito.project_id,
+            models.Component.tipo.in_(("quadro", "quadro_parcial")),
+        ).first()
+        if not quadro:
+            raise HTTPException(status_code=422, detail="Quadro inválido para este projeto.")
+        validar_fase_do_circuito(type("CircuitoPayload", (), {"fase": fase})(), quadro)
+    for campo, valor in dados.items():
         setattr(circuito, campo, valor)
     db.commit()
     db.refresh(circuito)
@@ -502,12 +632,55 @@ def calcular_caminho_circuito(project_id: int, circuit_id: int, db: Session) -> 
     return connection_ids_usados
 
 
+def _arvore_fisica_canonica(project_id: int, db: Session) -> dict:
+    """
+    Constrói UMA árvore de caminho mais curto (Dijkstra) a partir do(s)
+    quadro(s), ignorando circuitos_bloqueados — usada só para decidir onde
+    a fiação muda de composição, não para o cálculo elétrico em si.
+    Devolve {component_id: connection_id_do_pai}.
+    """
+    todos_componentes = db.query(models.Component).filter(models.Component.project_id == project_id).all()
+    comp_map = {c.id: c for c in todos_componentes}
+    quadros = [c for c in todos_componentes if c.tipo in ("quadro", "quadro_parcial")]
+    if not quadros:
+        return {}
+
+    conexoes = db.query(models.Connection).filter(models.Connection.project_id == project_id).all()
+    adj = {c.id: [] for c in todos_componentes}
+    for conn in conexoes:
+        if conn.origem_id in comp_map and conn.destino_id in comp_map:
+            c1, c2 = comp_map[conn.origem_id], comp_map[conn.destino_id]
+            dist = math.sqrt(((c1.x or 0) - (c2.x or 0)) ** 2 + ((c1.y or 0) - (c2.y or 0)) ** 2)
+            adj[conn.origem_id].append((conn.destino_id, dist, conn.id))
+            adj[conn.destino_id].append((conn.origem_id, dist, conn.id))
+
+    distancias = {c.id: float('inf') for c in todos_componentes}
+    pai_edge = {}
+    queue = []
+    for q in quadros:
+        distancias[q.id] = 0.0
+        heapq.heappush(queue, (0.0, q.id))
+
+    while queue:
+        dist_atual, u = heapq.heappop(queue)
+        if dist_atual > distancias[u]:
+            continue
+        for v, peso, conn_id in adj.get(u, []):
+            nova_dist = dist_atual + peso
+            if nova_dist < distancias[v]:
+                distancias[v] = nova_dist
+                pai_edge[v] = conn_id
+                heapq.heappush(queue, (nova_dist, v))
+
+    return pai_edge
+
+
 @router.get("/projects/{project_id}/eletrodutos/fiacao")
 def obter_fiacao_eletrodutos(project_id: int, db: Session = Depends(get_db)):
     """
     Para cada conduto (Connection) do projeto, devolve a lista de circuitos
     cujo caminho mais curto até ao quadro passa por esse troço — pronto para
-    desenhar a notação de chicote de condutores (traço por fio, numerado,
+    desenhar a notação de chicote de condutores (um traço por circuito, numerado,
     com secção em baixo, e um traço extra 'T' de terra).
     """
     projeto = db.query(models.Project).filter(models.Project.id == project_id).first()
@@ -542,6 +715,47 @@ def obter_fiacao_eletrodutos(project_id: int, db: Session = Depends(get_db)):
             "circuitos": circuitos_no_troco,
             "tem_terra": len(circuitos_no_troco) > 0,
         })
+
+    # Decide onde rotular: só onde a composição do chicote muda face ao troço
+    # "pai" na árvore física canónica (ignorando bloqueios).
+    pai_edge = _arvore_fisica_canonica(project_id, db)
+
+    # connection_id -> assinatura (tupla ordenada de circuit_id)
+    assinatura = {
+        conn.id: tuple(sorted(c["circuit_id"] for c in fiacao_por_conexao.get(conn.id, [])))
+        for conn in conexoes
+    }
+
+    comp_map = {c.id: c for c in db.query(models.Component).filter(models.Component.project_id == project_id).all()}
+
+    for item in resultado:
+        conn_id = item["connection_id"]
+        origem_comp = comp_map.get(item["origem_id"])
+        destino_comp = comp_map.get(item["destino_id"])
+
+        # Determina qual extremo é o "filho" nesta ligação (o nó alcançado
+        # através dela na árvore canónica) e qual é o "pai".
+        no_filho = None
+        no_pai = None
+        if destino_comp and pai_edge.get(destino_comp.id) == conn_id:
+            no_filho = destino_comp
+            no_pai = origem_comp
+        elif origem_comp and pai_edge.get(origem_comp.id) == conn_id:
+            no_filho = origem_comp
+            no_pai = destino_comp
+        else:
+            # Ligação fora da árvore canónica (ex.: dois quadros) — trata como primeiro troço.
+            no_filho = destino_comp or origem_comp
+            no_pai = None
+
+        # A ligação "pai" é a que liga o nó pai ao seu próprio pai (a montante).
+        conn_pai_id = pai_edge.get(no_pai.id) if no_pai else None
+        assinatura_pai = assinatura.get(conn_pai_id, ()) if conn_pai_id is not None else None
+
+        # Mostra rótulo se: é o primeiro troço (sem pai válido), ou a composição mudou face ao pai
+        item["mostrar_rotulo"] = (
+            assinatura_pai is None or assinatura.get(conn_id, ()) != assinatura_pai
+        )
 
     return {"project_id": project_id, "eletrodutos": resultado}
 
@@ -773,6 +987,7 @@ class _DimItem(BaseModel):
     cableSection_mm2: float
     voltageDrop_percentage: float
     warnings: List[str] = []
+    fases: List[str] = []
 
 
 class _DimError(BaseModel):
@@ -785,6 +1000,7 @@ class _DimGlobalResponse(BaseModel):
     project_id: int
     total_circuits: int
     results: List[Union[_DimItem, _DimError]]
+    balanceamento: list = []
 
 
 @router.post("/projects/{project_id}/dimensionamento-global", response_model=_DimGlobalResponse)
@@ -812,6 +1028,7 @@ def dimensionar_todos_circuitos(
     ).all()
 
     resultados = []
+    resultados_para_balanco = {}
 
     # Pré-construir dicionário circuito -> componentes (O(N) em vez de O(C×N))
     comp_by_circuit = {}
@@ -834,7 +1051,7 @@ def dimensionar_todos_circuitos(
         temperatura = temp if temp is not None else 30.0
 
         fase = (circuito.fase or "monofasico").lower()
-        voltage_V = 380 if fase in ("bifasico", "trifasico") else 220
+        voltage_V = tensao_efetiva_por_tipo(fase)
 
         circuitType = _detect_circuit_type(componentes)
 
@@ -855,6 +1072,7 @@ def dimensionar_todos_circuitos(
             circuito.disjuntor_amperagem = resultado.breaker_A
             circuito.cabo_bitola_mm2 = resultado.cableSection_mm2
 
+            resultados_para_balanco[circuito.id] = {"potencia_total_w": potencia_total}
             resultados.append(_DimItem(
                 circuito_id=circuito.id,
                 circuito_nome=circuito.nome,
@@ -865,6 +1083,7 @@ def dimensionar_todos_circuitos(
                 cableSection_mm2=resultado.cableSection_mm2,
                 voltageDrop_percentage=resultado.voltageDrop_percentage,
                 warnings=resultado.warnings,
+                fases=fases_por_tipo(circuito),
             ))
         except Exception as e:
             resultados.append(_DimError(
@@ -875,10 +1094,12 @@ def dimensionar_todos_circuitos(
 
     db.commit()
 
+    quadros = [c for c in todos_componentes if c.tipo in ("quadro", "quadro_parcial")]
     return _DimGlobalResponse(
         project_id=project_id,
         total_circuits=len(resultados),
         results=resultados,
+        balanceamento=balancear_por_fase(circuitos, resultados_para_balanco, quadros),
     )
 
 

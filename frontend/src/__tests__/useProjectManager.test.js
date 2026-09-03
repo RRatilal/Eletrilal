@@ -30,8 +30,8 @@ import { useProjectManager } from "../hooks/useProjectManager";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-function criarProjetoMock(id = 1, nome = "Projeto Teste") {
-  return { id, nome, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString() };
+function criarProjetoMock(id = 1, nome = "Projeto Teste", options = {}) {
+  return { id, nome, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString(), ...options };
 }
 
 function criarComponenteMock(id = 1, options = {}) {
@@ -94,7 +94,7 @@ describe("useProjectManager", () => {
 
     it("deve carregar dados do projeto e atualizar estado", async () => {
       const { result } = renderHook(() => useProjectManager());
-      const projeto = criarProjetoMock(1);
+      const projeto = criarProjetoMock(1, "Projeto Teste", { dxf_original_path: "/tmp/planta.dxf" });
 
       await act(async () => {
         await result.current.abrirProjeto(projeto);
@@ -140,10 +140,22 @@ describe("useProjectManager", () => {
       expect(result.current.erro).toBe("Erro de rede");
     });
 
+    it("não deve consultar geometria para projeto sem DXF", async () => {
+      const { result } = renderHook(() => useProjectManager());
+      const projeto = criarProjetoMock(1);
+
+      await act(async () => {
+        await result.current.abrirProjeto(projeto);
+      });
+
+      expect(result.current.geometria).toBeNull();
+      expect(mockApi.obterGeometria).not.toHaveBeenCalled();
+    });
+
     it("deve prosseguir sem geometria se a API falhar ao obtê-la", async () => {
       mockApi.obterGeometria.mockRejectedValue(new Error("Sem DXF"));
       const { result } = renderHook(() => useProjectManager());
-      const projeto = criarProjetoMock(1);
+      const projeto = criarProjetoMock(1, "Projeto Teste", { dxf_original_path: "/tmp/planta.dxf" });
 
       await act(async () => {
         await result.current.abrirProjeto(projeto);

@@ -76,12 +76,28 @@
 /* ---------- New circuit form ---------- */
 .circuitos-panel .new-circuit {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   gap: var(--space-xs);
   margin-bottom: var(--space-md);
 }
 
+.circuit-group-new {
+  width: auto;
+  max-width: calc(100% - 2 * var(--space-sm));
+  box-sizing: border-box;
+  margin: var(--space-sm) var(--space-sm) 0;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border-subtle);
+}
+
 .circuitos-panel .new-circuit input {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 6px 10px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
@@ -102,24 +118,41 @@
 }
 
 .circuitos-panel .new-circuit button {
-  width: 30px;
-  height: 30px;
+  flex: 0 0 32px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
   border-radius: var(--radius-sm);
   border: 1px solid var(--accent-primary);
   background: var(--accent-glow);
   color: var(--accent-primary-hover);
-  font-size: 16px;
+  font-size: 18px;
+  line-height: 1;
   font-weight: 600;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--transition-fast);
+  align-self: center;
+  max-width: 100%;
+  transition: background-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .circuitos-panel .new-circuit button:hover {
   background: var(--accent-primary);
-  color: var(--text-primary);
+  color: var(--text-inverse);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.circuitos-panel .new-circuit button:active {
+  transform: scale(0.92);
+}
+
+.circuitos-panel .new-circuit button:focus-visible {
+  outline: 2px solid var(--accent-primary-hover);
+  outline-offset: 2px;
 }
 
 /* ---------- Cards ---------- */
@@ -129,12 +162,96 @@
   gap: var(--space-sm);
 }
 
+.circuitos-panel .circuit-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.circuitos-panel .circuit-group-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 30px;
+  padding: var(--space-xs) var(--space-sm);
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.circuitos-panel .circuit-group-header-static {
+  cursor: default;
+}
+
+.circuitos-panel .circuit-group-marker {
+  width: 7px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-glow);
+  flex-shrink: 0;
+}
+
+.circuitos-panel .circuit-group-title {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.circuitos-panel .circuit-group-type,
+.circuitos-panel .circuit-group-count {
+  color: var(--text-tertiary);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 10px;
+}
+
+.circuitos-panel .circuit-group-count {
+  min-width: 20px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+.circuitos-panel .circuit-group-unassigned {
+  border-style: dashed;
+}
+
+.circuitos-panel .balance-warning { border-color: #d39b24; }
+.circuitos-panel .balance-danger { border-color: #c94936; }
+.circuitos-panel .balance-ok { border-color: var(--border-subtle); }
+
+.circuitos-panel .circuit-group-unassigned .circuit-group-marker {
+  background: var(--text-tertiary);
+  box-shadow: none;
+}
+
+.circuitos-panel .circuit-unassigned-warning {
+  margin: var(--space-xs) var(--space-sm);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
 .circuitos-panel .circuit-card {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-md);
   background: var(--bg-elevated);
   transition: border-color var(--transition-fast);
+}
+
+.circuitos-panel .circuit-group .circuit-card {
+  margin: 0;
 }
 
 .circuitos-panel .circuit-card:hover {

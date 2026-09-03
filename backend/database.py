@@ -6,11 +6,17 @@ import os
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# Raiz atual do projeto Electrilal.
+# Pode ser substituída por ELECTRILAL_PROJECT_ROOT quando o projeto for movido.
+PROJECT_ROOT = os.environ.get(
+    "ELECTRILAL_PROJECT_ROOT",
+    "/home/ratilal/Projectos/Electrilal",
+)
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-DATABASE_URL = f"sqlite:///{os.path.join(DATA_DIR, 'projeto.db')}"
+DATABASE_PATH = os.path.join(DATA_DIR, "projeto.db")
+DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 # check_same_thread=False é necessário para SQLite + FastAPI (múltiplos threads)
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -45,6 +51,7 @@ def init_db():
         _migar_coluna(cursor, "circuits", "queda_tensao_max_pct", "FLOAT DEFAULT 4.0")
         _migar_coluna(cursor, "circuits", "quadro_id", "INTEGER REFERENCES components(id)")
         _migar_coluna(cursor, "circuits", "numero", "INTEGER DEFAULT NULL")
+        _migar_coluna(cursor, "circuits", "fases", "TEXT DEFAULT '[]'")
         _migar_coluna(cursor, "connections", "localizacao", "VARCHAR DEFAULT 'teto_parede'")
         _migar_coluna(cursor, "connections", "circuitos_bloqueados", "VARCHAR DEFAULT '[]'")
         _migar_coluna(cursor, "connections", "c1_x", "FLOAT DEFAULT NULL")

@@ -79,9 +79,21 @@ if $MODO_BACKEND; then
     source .venv/bin/activate
   fi
 
-  # Verificar se uvicorn está instalado
+  # Se uvicorn não estiver disponível, criar/reparar venv e instalar dependências
   if ! command -v uvicorn &>/dev/null; then
-    aviso "uvicorn não encontrado. A instalar dependências do backend..."
+    aviso "Ambiente virtual ou uvicorn não encontrado. A configurar backend/venv..."
+    if command -v python3 &>/dev/null; then
+      python3 -m venv venv
+    else
+      python -m venv venv
+    fi
+
+    if [ -f "venv/bin/activate" ]; then
+      source venv/bin/activate
+    elif [ -f "venv/Scripts/activate" ]; then
+      source venv/Scripts/activate
+    fi
+
     pip install -r requirements.txt
   fi
 

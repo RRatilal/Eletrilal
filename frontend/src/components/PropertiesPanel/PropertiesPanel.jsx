@@ -263,6 +263,7 @@ export default function PropertiesPanel({
       rotulo: componente?.rotulo || (isParcial ? "QP - Anexo" : "QGBT"),
       incluir_idr: true,
       incluir_dps: true,
+      tipo_fase: "trifasico",
       quadro_pai_id: null,
     };
     if (componente?.rotulo) {
@@ -277,6 +278,7 @@ export default function PropertiesPanel({
     const [rotuloVal, setRotuloVal] = useState(parsedData.rotulo || (isParcial ? "QP - Anexo" : "QGBT"));
     const [incluirIdr, setIncluirIdr] = useState(ed?.incluir_idr ?? parsedData.incluir_idr ?? true);
     const [incluirDps, setIncluirDps] = useState(ed?.incluir_dps ?? parsedData.incluir_dps ?? true);
+    const [tipoFase, setTipoFase] = useState(ed?.tipo_fase ?? parsedData.tipo_fase ?? "trifasico");
     const [quadroPaiId, setQuadroPaiId] = useState(ed?.quadro_pai_id ?? parsedData.quadro_pai_id ?? "");
 
     const quadrosDisponiveis = componentes.filter(
@@ -289,6 +291,7 @@ export default function PropertiesPanel({
         rotulo: rotuloVal,
         incluir_idr: incluirIdr,
         incluir_dps: incluirDps,
+        tipo_fase: tipoFase,
         quadro_pai_id: quadroPaiId ? parseInt(quadroPaiId, 10) : null,
       });
 
@@ -303,6 +306,7 @@ export default function PropertiesPanel({
             nome: { value: rotuloVal, visible: true },
             incluir_idr: incluirIdr,
             incluir_dps: incluirDps,
+            tipo_fase: tipoFase,
             quadro_pai_id: quadroPaiId ? parseInt(quadroPaiId, 10) : null,
           }));
         }
@@ -350,6 +354,26 @@ export default function PropertiesPanel({
             onChange={(e) => setIncluirDps(e.target.checked)}
           />
         </div>
+
+        <fieldset className="quadro-phase-fieldset">
+          <legend className="quadro-field-label">Tipo de fase da alimentação</legend>
+          {[
+            ["monofasico", "Monofásico · 1P+N · 230 V"],
+            ["bifasico", "Bifásico · 2P · 400 V"],
+            ["trifasico", "Trifásico · 3P+N · 400/230 V"],
+          ].map(([valor, texto]) => (
+            <label key={valor} className="radio-label quadro-phase-option">
+              <input
+                type="radio"
+                name={`tipo-fase-quadro-${componente.id}`}
+                value={valor}
+                checked={tipoFase === valor}
+                onChange={() => setTipoFase(valor)}
+              />
+              <span>{texto}</span>
+            </label>
+          ))}
+        </fieldset>
 
         {isParcial && (
           <div className="quadro-form-group" style={{ marginTop: "12px" }}>

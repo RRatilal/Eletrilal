@@ -21,6 +21,7 @@ TipoComponente = Literal[
     "interruptor_simples", "interruptor_duplo", "interruptor_triplo", "interruptor_intermediario", "interruptor_paralelo", "interruptor_dimmer", "interruptor_pulsador"
 ]
 TipoFase = Literal["monofasico", "bifasico", "trifasico"]
+TipoFaseRede = Literal["L1", "L2", "L3"]
 
 
 # ---------- Project ----------
@@ -60,7 +61,9 @@ class RoomOut(BaseModel):
 class CircuitCreate(BaseModel):
     nome: str
     numero: Optional[int] = None
+    # Mantido para compatibilidade; o cálculo deriva o tipo da lista fases.
     fase: TipoFase = "monofasico"
+    fases: Optional[List[TipoFaseRede]] = None
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
     temperatura_c: float = 30.0
@@ -75,6 +78,7 @@ class CircuitOut(BaseModel):
     nome: str
     numero: Optional[int] = None
     fase: TipoFase
+    fases: Optional[List[TipoFaseRede]] = None
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
     temperatura_c: float = 30.0
@@ -85,7 +89,9 @@ class CircuitOut(BaseModel):
 class CircuitUpdate(BaseModel):
     nome: Optional[str] = None
     numero: Optional[int] = None
+    # Mantido para compatibilidade; o cálculo deriva o tipo da lista fases.
     fase: Optional[TipoFase] = None
+    fases: Optional[List[TipoFaseRede]] = None
     disjuntor_amperagem: Optional[float] = None
     cabo_bitola_mm2: Optional[float] = None
     temperatura_c: Optional[float] = None
@@ -192,6 +198,22 @@ class ExportPdfRequest(BaseModel):
     data: Optional[str] = None
     escala_manual: Optional[str] = None
     numero_folha: int = Field(default=1, ge=1)
+
+    @field_validator("escala_manual")
+    @classmethod
+    def validar_escala_manual(cls, valor):
+        if valor is None or not str(valor).strip():
+            return valor
+        texto = str(valor).strip().lower().replace(" ", "")
+        if texto.startswith("1:"):
+            texto = texto[2:]
+        try:
+            denominador = float(texto.replace(",", "."))
+        except ValueError as erro:
+            raise ValueError("A escala deve estar no formato 1:50.") from erro
+        if denominador <= 0:
+            raise ValueError("O denominador da escala deve ser maior que zero.")
+        return valor
     notas: Optional[str] = None
     incluir_unifilar: bool = True
 

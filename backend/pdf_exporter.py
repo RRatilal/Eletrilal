@@ -17,7 +17,7 @@ from reportlab.pdfgen.canvas import Canvas as PdfCanvas
 
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from pdf_unifilar import desenhar_diagrama_unifilar
-from pdf_utils import valor as _valor, cortar_texto as _cortar_texto
+from pdf_utils import valor as _valor, cortar_texto as _cortar_texto, nome_legivel as _nome_legivel
 
 PRETO = colors.black
 CINZA = colors.HexColor("#444444")
@@ -93,25 +93,33 @@ def _numero_curto(valor, padrao="—"):
         return str(valor)
 
 
-def _fase(fase):
-    return {"monofasico": "Monofásico", "bifasico": "Bifásico", "trifasico": "Trifásico"}.get(
-        str(fase or "monofasico").lower(), str(fase or "—")
+def _fase(fase, fases=None):
+    if isinstance(fases, str):
+        try:
+            fases = json.loads(fases)
+        except (TypeError, ValueError):
+            fases = None
+    validas = [f for f in (fases or []) if f in ("L1", "L2", "L3")]
+    if validas:
+        return "-".join(validas)
+    return {"monofasico": "L1", "bifasico": "L1-L2", "trifasico": "L1-L2-L3"}.get(
+        str(fase or "monofasico").lower(), "—"
     )
 
 
 def _parse_scale(valor):
-    if not valor:
+    if valor is None or str(valor).strip() == "":
         return None
     texto = str(valor).lower().replace(" ", "")
     if texto.startswith("1:"):
         texto = texto[2:]
     try:
         denominador = float(texto.replace(",", "."))
-        if denominador <= 0:
-            return None
-        return denominador
-    except ValueError:
-        return None
+    except ValueError as erro:
+        raise ValueError("A escala deve estar no formato 1:50.") from erro
+    if not math.isfinite(denominador) or denominador <= 0:
+        raise ValueError("O denominador da escala deve ser maior que zero.")
+    return denominador
 
 
 def _geometrias_room(rooms):
@@ -607,6 +615,26 @@ def _resultado_para_circuito(circuito, resultados):
     return resultado if isinstance(resultado, dict) else {}
 
 
+def _quadro_nome_tabela(circuito):
+    """Nome do quadro na tabela, sem vazar JSON de configuração."""
+    return _nome_legivel(_valor(circuito, "quadro_nome")) or "—"
+
+
+def _descricao_tabela(circuito, resultado):
+    """Texto da coluna Descrição: nome do circuito ou erro real de cálculo.
+
+    Avisos de dimensionamento (ex.: potência acima do recomendado) não
+    substituem o nome do circuito — apenas falhas reais com a chave ``erro``
+    são indicadas na tabela.
+    """
+    nome = str(_valor(circuito, "nome", "Circuito") or "Circuito").strip()
+    if not isinstance(resultado, dict):
+        return nome
+    if resultado.get("erro"):
+        return f"ERRO: {resultado['erro']}"
+    return nome
+
+
 def _estilo_tabela_qgbt():
     estilos = getSampleStyleSheet()
     estilo = ParagraphStyle("celula_pdf", parent=estilos["Normal"], fontName="Helvetica", fontSize=5.1, leading=6)
@@ -631,23 +659,24 @@ def _criar_tabela_qgbt(dados, larguras):
 
 def _desenhar_tabela_qgbt(canvas, x, y_top, largura, circuitos, resultados, altura_max=None):
     estilo, estilo_cab = _estilo_tabela_qgbt()
-    cabecalho = ["Nº", "Potência\n(VA)", "Corrente\n(A)", "Fase", "Disj.\n(A)", "Cabo\n(mm²)", "Comp.\n(m)", "Queda\n(%)", "Descrição"]
+    cabecalho = ["Nº", "Potência\n(VA)", "Corrente\n(A)", "Fase", "Disj.\n(A)", "Cabo\n(mm²)", "Comp.\n(m)", "Queda\n(%)", "Quadro", "Descrição"]
     dados = [[Paragraph(c.replace("\n", "<br/>"), estilo_cab) for c in cabecalho]]
-    descricao_largura = max(70, largura - 333)
+    descricao_largura = max(70, largura - 375)
     for indice, circuito in enumerate(circuitos or [], start=1):
         r = _resultado_para_circuito(circuito, resultados)
         dados.append([
-            str(indice),
+            _numero_curto(_valor(circuito, "numero", indice)),
             _numero_curto(r.get("potencia_total_w")),
             _numero(r.get("corrente_a"), 2),
-            _fase(_valor(circuito, "fase")),
+            _fase(_valor(circuito, "fase"), _valor(circuito, "fases")),
             _numero_curto(r.get("disjuntor_recomendado_a", _valor(circuito, "disjuntor_amperagem"))),
             _numero_curto(r.get("cabo_recomendado_mm2", _valor(circuito, "cabo_bitola_mm2"))),
             _numero(r.get("comprimento_m"), 2),
             _numero(r.get("queda_tensao_pct"), 2),
-            Paragraph(_cortar_texto(_valor(circuito, "nome", "Circuito"), descricao_largura - 4, tamanho=5.1), estilo),
+            Paragraph(_cortar_texto(_quadro_nome_tabela(circuito), 42, tamanho=5.1), estilo),
+            Paragraph(_cortar_texto(_descricao_tabela(circuito, r), descricao_largura - 4, tamanho=5.1), estilo),
         ])
-    larguras = [18, 40, 38, 48, 35, 38, 38, 38, descricao_largura]
+    larguras = [18, 40, 38, 48, 35, 38, 38, 38, 48, descricao_largura]
     escala_largura = largura / sum(larguras)
     larguras = [w * escala_largura for w in larguras]
     tabela = _criar_tabela_qgbt(dados, larguras)
@@ -658,7 +687,7 @@ def _desenhar_tabela_qgbt(canvas, x, y_top, largura, circuitos, resultados, altu
         restantes = total_circuitos
         while restantes > 0:
             candidatos = dados[:restantes + 1]
-            candidatos.append([Paragraph(f"{total_circuitos - restantes} circuito(s) omitido(s) por falta de espaço", estilo), "", "", "", "", "", "", "", ""])
+            candidatos.append([Paragraph(f"{total_circuitos - restantes} circuito(s) omitido(s) por falta de espaço", estilo), "", "", "", "", "", "", "", "", ""])
             tabela_candidata = _criar_tabela_qgbt(candidatos, larguras)
             _, altura_candidata = tabela_candidata.wrap(largura, 1000)
             if altura_candidata <= altura_max:
@@ -672,6 +701,53 @@ def _desenhar_tabela_qgbt(canvas, x, y_top, largura, circuitos, resultados, altu
     canvas.setFont("Helvetica-Bold", 8)
     canvas.drawString(x, y_top + 10, "QGBT — QUADRO GERAL DE BAIXA TENSÃO")
     return altura
+
+
+def _desenhar_tabela_circuitos_completa(canvas, largura, altura, circuitos, resultados, nome, y_top=None, titulo=True, x_left=36, largura_max=None):
+    """Desenha a tabela completa e devolve a altura ocupada."""
+    margem = 36
+    x_left = float(x_left)
+    largura_disponivel = float(largura_max or (largura - x_left - margem))
+    canvas.setStrokeColor(PRETO)
+    canvas.setFillColor(PRETO)
+    if y_top is None:
+        y_top = altura - margem
+    if titulo:
+        canvas.setFont("Helvetica-Bold", 13)
+        canvas.drawString(x_left, y_top, "TABELA COMPLETA DE CIRCUITOS")
+        canvas.setFont("Helvetica", 7)
+        canvas.drawRightString(x_left + largura_disponivel, y_top, _cortar_texto(nome, 180, tamanho=7))
+        y_top -= 35
+
+    estilo, estilo_cab = _estilo_tabela_qgbt()
+    cabecalho = ["Nº", "Potência\\n(VA)", "Corrente\\n(A)", "Fase", "Disj.\\n(A)", "Cabo\\n(mm²)", "Comp.\\n(m)", "Queda\\n(%)", "Quadro", "Descrição"]
+    dados = [[Paragraph(c.replace("\\n", "<br/>"), estilo_cab) for c in cabecalho]]
+    for indice, circuito in enumerate(circuitos or [], start=1):
+        resultado = _resultado_para_circuito(circuito, resultados)
+        cabo = resultado.get("cabo_recomendado_mm2", _valor(circuito, "cabo_bitola_mm2"))
+        dados.append([
+            _numero_curto(_valor(circuito, "numero", indice)),
+            _numero_curto(resultado.get("potencia_total_w")),
+            _numero(resultado.get("corrente_a"), 2),
+            _fase(_valor(circuito, "fase"), _valor(circuito, "fases")),
+            _numero_curto(resultado.get("disjuntor_recomendado_a", _valor(circuito, "disjuntor_amperagem"))),
+            _numero_curto(cabo),
+            _numero(resultado.get("comprimento_m"), 2),
+            _numero(resultado.get("queda_tensao_pct"), 2),
+            Paragraph(_cortar_texto(_quadro_nome_tabela(circuito), 54, tamanho=5.5), estilo),
+            Paragraph(_cortar_texto(_descricao_tabela(circuito, resultado), 180, tamanho=5.5), estilo),
+        ])
+
+    larguras_base = [28, 55, 52, 58, 48, 52, 52, 52, 68, 180]
+    fator = min(1.0, largura_disponivel / sum(larguras_base))
+    larguras = [valor * fator for valor in larguras_base]
+    tabela = _criar_tabela_qgbt(dados, larguras)
+    tabela.wrapOn(canvas, largura_disponivel, altura - 2 * margem - 30)
+    tabela.drawOn(canvas, x_left, y_top - tabela._height)
+    if titulo:
+        canvas.setFont("Helvetica", 6)
+        canvas.drawString(x_left, margem, "Todos os circuitos incluídos — validar os valores pelo técnico responsável.")
+    return tabela._height + (35 if titulo else 0)
 
 
 def _desenhar_carimbo(canvas, x, y, largura, altura, config, escala_texto):
@@ -726,7 +802,7 @@ def _tamanho_pagina(formato):
     return landscape(A3 if str(formato).upper() == "A3" else A4)
 
 
-def gerar_pdf_projeto(caminho_saida, projeto, geometria=None, componentes=None, circuitos=None, conexoes=None, rooms=None, resultados=None, config=None):
+def gerar_pdf_projeto(caminho_saida, projeto, geometria=None, componentes=None, circuitos=None, conexoes=None, rooms=None, resultados=None, config=None, quadros=None):
     """Gera o PDF completo e devolve o caminho do ficheiro criado.
 
     ``resultados`` é um dicionário indexado por ``circuit_id`` com o retorno
@@ -774,17 +850,20 @@ def gerar_pdf_projeto(caminho_saida, projeto, geometria=None, componentes=None, 
     if denominador is None:
         denominador, escala_texto = _escala_auto(limite)
     else:
-        escala_texto = f"1:{_numero_curto(denominador)}"
+        escala_real = PONTOS_POR_METRO_1_1 / denominador
+        if limite > 0 and escala_real > limite:
+            denominador_real = PONTOS_POR_METRO_1_1 / limite
+            escala_texto = f"ajuste ({denominador_real:.0f}:1)"
+        else:
+            escala_texto = f"1:{_numero_curto(denominador)}"
     _desenhar_planta(canvas, geometria, componentes, conexoes, rooms, planta_x, planta_y, planta_w, planta_h, denominador)
     canvas.setLineWidth(0.45)
     canvas.rect(planta_x, planta_y, planta_w, planta_h, stroke=1, fill=0)
     canvas.setFont("Helvetica", 6)
     canvas.drawString(planta_x + 5, planta_y + planta_h - 10, f"PLANTA — escala {escala_texto}")
 
-    tabela_y_top = planta_y - 28
-    tabela_w = max(280, planta_w)
-    altura_tabela_max = max(34, tabela_y_top - margem - 12)
-    _desenhar_tabela_qgbt(canvas, planta_x, tabela_y_top, tabela_w, circuitos, resultados, altura_max=altura_tabela_max)
+    # A tabela completa pertence à folha do diagrama unifilar. A página da
+    # planta fica reservada ao desenho, legenda, notas e carimbo.
 
     # Painel de informação rápida à direita, mantendo o carimbo limpo.
     painel_x = largura - margem - carimbo_w
@@ -815,6 +894,25 @@ def gerar_pdf_projeto(caminho_saida, projeto, geometria=None, componentes=None, 
 
     if config.get("incluir_unifilar", True):
         canvas.showPage()
-        desenhar_diagrama_unifilar(canvas, largura, altura, circuitos, resultados, nome)
+        desenhar_diagrama_unifilar(
+            canvas, largura, altura, circuitos, resultados, nome,
+            quadros=quadros,
+            disjuntor_geral=config.get("disjuntor_geral_a", 32),
+            diferencial=config.get("diferencial_a", 40),
+        )
+        # A tabela tenta ocupar a mesma folha do unifilar. Se não couber,
+        # mantém-se a página limpa e cria-se uma folha dedicada completa.
+        coluna_esquerda = largura * 0.52
+        coluna_direita_x = coluna_esquerda + 18
+        coluna_direita_w = largura - coluna_direita_x - 36
+        tabela_altura = _desenhar_tabela_circuitos_completa(
+            canvas, largura, altura, circuitos, resultados, nome,
+            y_top=altura - 55, titulo=True,
+            x_left=coluna_direita_x, largura_max=coluna_direita_w,
+        )
+        if tabela_altura > altura - 55 - 36:
+            canvas.showPage()
+            _desenhar_tabela_circuitos_completa(canvas, largura, altura, circuitos, resultados, nome)
+
     canvas.save()
     return caminho_saida

@@ -249,13 +249,25 @@ function obterPontoMedioConduto(pathArr) {
   return { x, y, angle: Math.atan2(y2 - y1, x2 - x1) };
 }
 
+const ZOOM_MINIMO_FIACAO = 0.5; // abaixo disto os rótulos viram ruído — esconder
+
+function rectsColidem(a, b, folga = 2) {
+  return !(
+    a.x2 + folga < b.x1 ||
+    b.x2 + folga < a.x1 ||
+    a.y2 + folga < b.y1 ||
+    b.y2 + folga < a.y1
+  );
+}
+
 /**
- * Desenha, ao longo de cada conduto (Connection), um traço perpendicular por
- * circuito que passa ali — numerado, com a secção (mm²) por baixo, e um traço
- * extra "T" para o terra. Notação clássica de chicote de condutores.
+ * Desenha a indicação de fiação de cada conduto (Connection): uma única linha
+ * de chamada oblíqua sai do conduto e termina no INÍCIO de uma régua horizontal,
+ * onde cada circuito é um slash vertical (número por cima, secção mm² por baixo)
+ * mais um slash "T" de terra. Só rotula onde a composição muda (mostrar_rotulo).
  *
- * fiacaoRef: { [connection_id]: { circuitos: [{numero, bitola_mm2}], tem_terra } }
- * Os traços/labels têm tamanho constante no ecrã (independente do zoom).
+ * Os rótulos são colocados com deteção de colisão (réguas entre si e contra os
+ * condutos) e escondidos quando o zoom está demasiado afastado.
  */
 export function drawFiacaoTicks(canvas, fiacaoRef, fiacaoVisivelRef) {
   if (!fiacaoVisivelRef.current || !fiacaoRef.current) return;
@@ -264,6 +276,10 @@ export function drawFiacaoTicks(canvas, fiacaoRef, fiacaoVisivelRef) {
 
   const zoom = canvas.getZoom();
   const vpt = canvas.viewportTransform;
+
+  // Zoom muito afastado → esconder para não virar uma "bagunça" ilegível.
+  if (zoom < ZOOM_MINIMO_FIACAO) return;
+
   const isDark = document.documentElement.getAttribute("data-theme") !== "light";
   const corTinta = isDark ? "#e5e7eb" : "#111827";
 
@@ -275,63 +291,122 @@ export function drawFiacaoTicks(canvas, fiacaoRef, fiacaoVisivelRef) {
   ctx.strokeStyle = corTinta;
   ctx.fillStyle = corTinta;
 
+  // 1) Recolhe os condutos a rotular e a caixa de colisão de cada conduto (ecrã).
+  const candidatos = [];
   canvas.getObjects().forEach((obj) => {
     if (!obj.data?.isConnection) return;
     const info = fiacaoRef.current[obj.data.connectionId];
     if (!info || info.circuitos.length === 0) return;
+    if (info.mostrar_rotulo === false) return;
 
     const mid = obterPontoMedioConduto(obj.path);
     if (!mid) return;
 
-    // Centro do chicote em coordenadas de ecrã
+    const br = obj.getBoundingRect();
+    candidatos.push({
+      connectionId: obj.data.connectionId,
+      mid,
+      info,
+      condutoBox: {
+        x1: br.left * zoom + vpt[4],
+        y1: br.top * zoom + vpt[5],
+        x2: (br.left + br.width) * zoom + vpt[4],
+        y2: (br.top + br.height) * zoom + vpt[5],
+      },
+    });
+  });
+
+  // 2) Rótulos maiores (mais circuitos) primeiro — têm prioridade de espaço.
+  candidatos.sort((a, b) => b.info.circuitos.length - a.info.circuitos.length);
+
+  // 3) Colocação greedy: desenha só se não colidir com réguas já colocadas
+  //    nem com os condutos (exceto o seu próprio).
+  const colocados = [];
+  const margem = 8;
+  const slashLen = 6;
+
+  candidatos.forEach((cond) => {
+    const mid = cond.mid;
     const scx = mid.x * zoom + vpt[4];
     const scy = mid.y * zoom + vpt[5];
-    const perp = mid.angle + Math.PI / 2;
 
-    // Um traço por condutor: fase(s) e neutro de cada circuito (numerados com
-    // o circuito por cima), mais um traço único "T" de terra no início.
-    const itens = [];
-    info.circuitos.forEach((c) => {
-      const numFases = c.fase === "trifasico" ? 3 : c.fase === "bifasico" ? 2 : 1;
-      const prefixo = c.numero != null ? String(c.numero) : "";
-      const bitola = c.bitola_mm2 != null ? String(c.bitola_mm2) : null;
-      for (let i = 0; i < numFases; i++) itens.push({ label: `${prefixo}F`, bitola });
-      itens.push({ label: `${prefixo}N`, bitola });
-    });
-    itens.push({ label: "T", bitola: null });
+    // Um slash por circuito (o número representa o par F+N), mais um "T" no fim.
+    const itens = [
+      ...cond.info.circuitos.map((c) => ({
+        label: c.numero != null ? String(c.numero) : "?",
+        bitola: c.bitola_mm2 != null ? String(c.bitola_mm2) : null,
+      })),
+      { label: "T", bitola: null },
+    ];
 
-    // Espaçamento adaptativo para números com 2 dígitos não se sobreporem
-    let maxLabelWidth = 0;
+    // Espaçamento adaptativo: considera a maior largura entre números e bitolas
+    // para os valores (bitola) por baixo não se sobreporem.
+    let maxTextoWidth = 0;
     itens.forEach((item) => {
-      maxLabelWidth = Math.max(maxLabelWidth, ctx.measureText(item.label).width);
+      const wLabel = ctx.measureText(item.label).width;
+      const wBitola = item.bitola ? ctx.measureText(item.bitola).width : 0;
+      maxTextoWidth = Math.max(maxTextoWidth, wLabel, wBitola);
     });
-    const espacamento = Math.max(14, maxLabelWidth + 4); // px entre traços, em espaço de ecrã
+    const espacamento = Math.max(16, maxTextoWidth + 6); // px entre slashes
     const totalLargura = (itens.length - 1) * espacamento;
-    const tickLen = 7;
+    const rulerLen = margem + totalLargura + margem;
+    const leadLen = 24; // px no ecrã
 
-    itens.forEach((item, i) => {
-      const offset = -totalLargura / 2 + i * espacamento;
-      const cx = scx + Math.cos(mid.angle) * offset;
-      const cy = scy + Math.sin(mid.angle) * offset;
+    // Tenta colocar primeiro para cima/direita, depois para cima/esquerda.
+    for (const dir of [1, -1]) {
+      const ex = scx + dir * leadLen * Math.SQRT1_2;
+      const ey = scy - leadLen * Math.SQRT1_2;
 
-      // Traço perpendicular ao conduto
-      const x1 = cx + Math.cos(perp) * tickLen;
-      const y1 = cy + Math.sin(perp) * tickLen;
-      const x2 = cx - Math.cos(perp) * tickLen;
-      const y2 = cy - Math.sin(perp) * tickLen;
+      const labelBox = {
+        x1: Math.min(ex, ex + dir * rulerLen) - 6,
+        y1: ey - 24,
+        x2: Math.max(ex, ex + dir * rulerLen) + 6,
+        y2: ey + 22,
+      };
 
+      // Colisão com réguas já colocadas
+      if (colocados.some((b) => rectsColidem(labelBox, b))) continue;
+      // Colisão com outros condutos
+      if (
+        candidatos.some(
+          (o) => o.connectionId !== cond.connectionId && rectsColidem(labelBox, o.condutoBox, 4)
+        )
+      ) {
+        continue;
+      }
+
+      // Linha de chamada (uma só) desde o conduto até ao início da régua
       ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
+      ctx.moveTo(scx, scy);
+      ctx.lineTo(ex, ey);
       ctx.stroke();
 
-      // Número do circuito por cima do traço
-      ctx.fillText(item.label, cx, y1 - 3);
-      // Secção (mm²) por baixo do traço
-      if (item.bitola) {
-        ctx.fillText(item.bitola, cx, y2 + 10);
-      }
-    });
+      // Régua horizontal
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex + dir * rulerLen, ey);
+      ctx.stroke();
+
+      itens.forEach((item, i) => {
+        const ix = ex + dir * (margem + i * espacamento);
+
+        // Slash vertical a cruzar a régua
+        ctx.beginPath();
+        ctx.moveTo(ix, ey - slashLen);
+        ctx.lineTo(ix, ey + slashLen);
+        ctx.stroke();
+
+        // Número do circuito por cima da régua
+        ctx.fillText(item.label, ix, ey - slashLen - 3);
+        // Secção (mm²) por baixo da régua
+        if (item.bitola) {
+          ctx.fillText(item.bitola, ix, ey + slashLen + 10);
+        }
+      });
+
+      colocados.push(labelBox);
+      break; // colocado com sucesso
+    }
   });
 
   ctx.restore();

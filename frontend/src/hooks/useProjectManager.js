@@ -53,13 +53,18 @@ export function useProjectManager() {
         plantaTravada: autosave?.plantaTravada ?? false,
       };
 
-      // Geometria vem sempre da API
+      // A geometria DXF é opcional. Evita-se a chamada quando o projeto
+      // ainda não tem DXF associado, prevenindo um 404 esperado no browser.
       let geoParaUsar = null;
-      try {
-        const geoResult = await api.obterGeometria(p.id);
-        if (geoResult?.geometria) geoParaUsar = geoResult.geometria;
-      } catch {
-        // Sem DXF associado
+      if (p.dxf_original_path) {
+        try {
+          const geoResult = await api.obterGeometria(p.id);
+          if (geoResult?.geometria) geoParaUsar = geoResult.geometria;
+        } catch (e) {
+          if (e?.status !== 404) {
+            console.warn("Não foi possível carregar a geometria do projeto:", e);
+          }
+        }
       }
       setGeometria(geoParaUsar);
 
