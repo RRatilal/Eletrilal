@@ -21,3 +21,8 @@ dist/
 .idea/
 .DS_Store
 *.log
+
+# Ferramentas de agentes locais (não fazem parte do projeto)
+.agents/
+.codex/
+.impeccable/
